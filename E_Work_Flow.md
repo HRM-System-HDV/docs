@@ -132,9 +132,9 @@ Không tự đổi tên trường. Mọi thay đổi phải cập nhật `A_Work
 
 - **Thông báo (Notification):** `id, targetEmployeeId (null = toàn hệ thống), branchSlug, title, body, isRead, createdAt`
 
-- **Bảng tin (Announcement/News):** `id, title, summary, content, author, date, tag, tagTone (danger/warning/success/primary/gray), pinned (bool)`
+- **Bảng tin (Announcement/News):** `id, title, summary, content, date, tag, tagTone (danger/warning/success/primary/gray), pinned (bool)`
 
-- **Nội quy (Regulation):** `id, code, title, category, summary, content, status (hiệu lực/dự thảo/hết hiệu lực), scope (Toàn công ty hoặc slug chi nhánh), effectiveDate (DD-MM-YYYY), expiryDate, author, createdAt, updatedAt, version, pinned, attachments (số file đính kèm)`
+- **Nội quy (Regulation):** `id, code, title, category, summary, content, status (hiệu lực/dự thảo/hết hiệu lực), scope (Toàn công ty hoặc slug chi nhánh), effectiveDate (DD-MM-YYYY), expiryDate, createdAt, updatedAt, version, pinned, attachments (số file đính kèm)`
 
 - **Wi-Fi chấm công:** `id, ssid, bssid, branch (slug chi nhánh), status (hoạt động/vô hiệu hóa)`
 
