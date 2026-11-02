@@ -114,7 +114,7 @@ const taxResult = await payrollClient.getTaxCalculation(payload);
 
 ### 7.3. Đồng bộ schema
 
-- Các thực thể lõi (Employee, Branch, Shift, BankAccount, Payslip, Request) phải đồng bộ tuyệt đối giữa backend, `frontend/src/mock-data/portal.ts` và `mobile/lib/src/core/models/`.
+- Các thực thể lõi (Employee, Branch, Shift, BankAccount, Payslip, Request) phải đồng bộ tuyệt đối giữa backend, `frontend/src/types` và `mobile/lib/src/core/models/`.
 - Không tự đổi tên trường. Mọi thay đổi schema phải cập nhật tài liệu SSOT trước rồi mới sửa code.
 - Quy ước ngày tháng: `date` và `joinDate` dùng `DD-MM-YYYY`; `Payslip.month` dùng `MM-YYYY`; query attendance dùng `month=YYYY-MM`.
 
