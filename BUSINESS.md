@@ -1696,7 +1696,6 @@ model News {
   title     String
   summary   String
   content   String
-  author    String
   date      String   // DD-MM-YYYY
   tag       String
   tagTone   String   @default("primary") // danger | warning | success | primary | gray
@@ -1718,7 +1717,6 @@ model Regulation {
   scope         String   @default("Toàn công ty")
   effectiveDate String   // DD-MM-YYYY
   expiryDate    String?
-  author        String
   version       String   @default("1.0")
   pinned        Boolean  @default(false)
   attachments   Int      @default(0)
