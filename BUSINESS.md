@@ -857,6 +857,7 @@ model Employee {
   systemRole        String   @default("staff") // admin | manager | staff
   status            String   @default("đang làm") // đang làm | resigned
   joinDate          String?
+  resignedAt        DateTime?
   baseSalary        Float    @default(0)
   salaryType        String   @default("monthly") // monthly | hourly
   hourlySalary      Float?
@@ -915,7 +916,7 @@ model Employee {
 | `GET` | `/api/employees/:id` | Lấy chi tiết hồ sơ nhân sự theo ID (phục vụ xem hồ sơ, hoặc `payroll-service` gọi nội bộ để lấy mức lương và tài khoản ngân hàng). Nếu không tìm thấy ném lỗi mã `EMPLOYEE_NOT_FOUND`. | `200` / `404` |
 | `POST` | `/api/employees` | Thêm mới nhân sự.<br/>- Bắt buộc: `name`, `email` hợp lệ.<br/>- Ràng buộc: `systemRole` chỉ nhận `admin`, `manager`, hoặc `staff`. Sai giá trị ném `VALIDATION_ERROR` (400).<br/>- `id` do hệ thống tự sinh `NV-0001`, `NV-0002`…; email trùng trả `DUPLICATE_RESOURCE` (409).<br/>- Khởi tạo ngầm định: `status: "đang làm"`, `salaryType: "monthly"`, `baseSalary: 0`.<br/>- Tự động đồng bộ tài khoản sang `identity-service` (`POST /api/auth/sync-employee`); lỗi đồng bộ không chặn việc tạo hồ sơ. | `201` / `400` / `409` |
 | `PUT` | `/api/employees/:id` | Cập nhật hồ sơ nhân viên (thông tin cá nhân, CCCD, ảnh, chi nhánh, phòng ban, vai trò, lương, tài khoản ngân hàng). Chỉ nhận các trường thuộc model `Employee`; `branch` được hiểu là alias của `branchSlug`. Validate email và `systemRole` nếu có cập nhật. Đổi họ tên sẽ cập nhật luôn tên quản lý ở chi nhánh/phòng ban đang tham chiếu; sau đó đồng bộ lại sang `identity-service`. | `200` / `400` / `404` |
-| `POST` | `/api/employees/:id/leave` | Xác nhận nhân viên thôi việc: chuyển `status` thành `"resigned"`. Lưu ý: schema không có cột `resignedAt`, nên thời điểm thôi việc **không được lưu**. | `200` / `404` |
+| `POST` | `/api/employees/:id/leave` | Xác nhận nhân viên thôi việc: chuyển `status` thành `"resigned"` và ghi thời điểm thôi việc vào cột `resignedAt`. | `200` / `404` |
 | `DELETE` | `/api/employees/:id` | Xóa hồ sơ nhân viên khỏi hệ thống, tính lại cột `staff`, đồng bộ lệnh xóa sang `identity-service`. | `200` / `404` |
 
 #### 4. Quy tắc Đồng bộ Quan hệ Nội bộ (String Reference)
@@ -1640,6 +1641,7 @@ model Request {
   id            String   @id @default(cuid())
   type          String   // leave | overtime | advance | shift_swap | work_supplement | other
   employeeId    String
+  targetEmployeeId String? // người được nhờ làm thay / đổi ca (shift_swap, overtime)
   branchSlug    String?
   title         String
   content       String
@@ -1674,6 +1676,18 @@ model Notification {
   createdAt        DateTime @default(now())
 
   @@map("notifications")
+}
+
+model NotificationSetting {
+  id             String   @id // = x-user-id do gateway xác thực
+  remindCheckIn  Boolean  @default(true)
+  remindCheckOut Boolean  @default(true)
+  remindShift    Boolean  @default(true)
+  notifyTask     Boolean  @default(true)
+  notifyLeave    Boolean  @default(true)
+  updatedAt      DateTime @updatedAt
+
+  @@map("notification_settings")
 }
 
 model SoapGatewayConfig {
@@ -1814,15 +1828,18 @@ sequenceDiagram
 |---|---|---|:---:|
 | `GET` | `/api/requests` | Danh sách đơn từ (lọc theo `type`, `employeeId`, `status`, `branchSlug`). | `200` |
 | `GET` | `/api/requests/:id` | Xem chi tiết một đơn từ. | `200` / `404` |
-| `POST` | `/api/requests` | Tạo mới đơn từ (`leave`, `overtime`, `advance`, `shift_swap`,...). Bắt buộc: `type` (thuộc danh sách hợp lệ), `employeeId`, `title`, `content`. Riêng `shift_swap` bắt buộc thêm `sourceShiftId` và `targetShiftId`. | `201` / `400` |
+| `POST` | `/api/requests` | Tạo mới đơn từ (`leave`, `overtime`, `advance`, `shift_swap`,...). Bắt buộc: `type` (thuộc danh sách hợp lệ), `employeeId`, `title`, `content`. Riêng `shift_swap` bắt buộc thêm `sourceShiftId` và `targetShiftId`. Đơn nhờ làm thay/đổi ca có thể gửi kèm `targetEmployeeId` và `notification`; hệ thống sinh thông báo cho đồng nghiệp với `metadata.requestId`. | `201` / `400` |
 | `PUT` | `/api/requests/:id/approve` | Duyệt đơn: Tự động sinh `Notification` và đổi ca nếu là `shift_swap`. | `200` / `400` / `404` |
 | `PUT` | `/api/requests/:id/reject` | Từ chối đơn: Tự động sinh `Notification` báo lý do từ chối. | `200` / `400` / `404` |
+| `PUT` | `/api/requests/:id/respond` | Đồng nghiệp được nhờ (`targetEmployeeId`) phản hồi đơn `overtime` / `shift_swap`: `accept: true/false`. Người khác gọi trả `403`; đơn đã xử lý trả `400`. | `200` / `400` / `403` / `404` |
 | `DELETE` | `/api/requests/:id` | Xóa đơn từ (Chỉ cho phép xóa khi đơn đang ở trạng thái `pending`). | `200` / `400` / `404` |
 
 #### 3. Quản lý Thông báo (`/api/notifications`)
 | Method | Đường dẫn | Chức năng nghiệp vụ & Quy tắc kiểm tra | Mã phản hồi |
 |---|---|---|:---:|
 | `GET` | `/api/notifications` | Lấy danh sách thông báo (tự động gồm broadcast và thông báo riêng của `employeeId`). | `200` |
+| `GET` | `/api/notifications/settings` | Lấy cài đặt nhận thông báo của người dùng đang đăng nhập (lưu bền trong bảng `notification_settings`, mặc định bật tất cả). | `200` |
+| `PUT` | `/api/notifications/settings` | Cập nhật cài đặt nhận thông báo: `remindCheckIn`, `remindCheckOut`, `remindShift`, `notifyTask`, `notifyLeave` (chỉ nhận giá trị boolean; khóa lạ bị bỏ qua). | `200` |
 | `POST` | `/api/notifications` | Tạo thông báo mới (Admin / Quản lý phát thông báo). Bắt buộc: `title`, `body`. | `201` / `400` |
 | `PUT` | `/api/notifications/:id/read` | Đánh dấu 1 thông báo đã đọc (`isRead = true`). | `200` / `404` |
 | `PUT` | `/api/notifications/read-all` | Đánh dấu tất cả thông báo của nhân viên đã đọc (bắt buộc `?employeeId=` hoặc `?branchSlug=`). | `200` / `400` |
@@ -1909,8 +1926,8 @@ Dịch vụ đã được cấu hình bộ kiểm thử tự động với `node
 | Tính toán bảng lương tháng, Tự động gom phạt chấm công, Lương thực lĩnh | `payroll-service` | `4004` | `POST /api/payroll/payslips/generate`<br/>`GET /api/payroll/payslips` | `hrm_payroll` (`payslips`) |
 | Lệnh chuyển khoản lương REST, Chống chi trùng lặp (`idempotencyKey`), Tài khoản công ty | `payroll-service` | `4004` | `POST /api/payroll/payouts`<br/>`GET /api/payroll/payouts`<br/>`GET/POST /api/payroll/bank-accounts` | `hrm_payroll` (`payouts`, `bank_accounts`) |
 | Cổng ngân hàng SOAP XML (WSDL, PayoutRequest, soap:Fault) | `integration-service` | `4005` | `GET /soap/payroll?wsdl`<br/>`POST /soap/payroll` | Không lưu bảng (gọi sang `payroll-service`) |
-| Đơn từ (Nghỉ phép, Ứng lương, Đổi ca), Tự động đồng bộ ca sang work-service | `integration-service` | `4005` | `GET/POST /api/requests`<br/>`PUT /api/requests/:id/approve` | `hrm_integration` (`requests`) |
-| Thông báo người dùng (Broadcast hoặc đích danh), Đánh dấu đã đọc | `integration-service` | `4005` | `GET/POST /api/notifications`<br/>`PUT /api/notifications/:id/read` | `hrm_integration` (`notifications`) |
+| Đơn từ (Nghỉ phép, Ứng lương, Đổi ca), Tự động đồng bộ ca sang work-service | `integration-service` | `4005` | `GET/POST /api/requests`<br/>`PUT /api/requests/:id/approve`<br/>`PUT /api/requests/:id/respond` | `hrm_integration` (`requests`) |
+| Thông báo người dùng (Broadcast hoặc đích danh), Đánh dấu đã đọc, Cài đặt nhận thông báo | `integration-service` | `4005` | `GET/POST /api/notifications`<br/>`PUT /api/notifications/:id/read`<br/>`GET/PUT /api/notifications/settings` | `hrm_integration` (`notifications`, `notification_settings`) |
 | Đăng ký Router Wi-Fi chi nhánh (SSID, BSSID MAC) | `integration-service` | `4005` | `GET/POST /api/wifi-configs` | `hrm_integration` (`wifi_configs`) |
 | Bảng tin truyền thông nội bộ, Văn bản chính sách quy chế | `integration-service` | `4005` | `GET/POST /api/news`<br/>`GET/POST /api/regulations` | `hrm_integration` (`news`, `regulations`) |
 | Tải ảnh avatar, chứng từ y tế lên Cloudinary | `integration-service` | `4005` | `POST /api/upload` | Đám mây Cloudinary |
