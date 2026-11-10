@@ -126,11 +126,13 @@ Không tự đổi tên trường. Mọi thay đổi phải cập nhật `A_Work
 
 - **Khuôn SOAP:** `POST /soap/payroll` nhận `PayoutRequest (idempotencyKey, debitAccount, content, totalAmount, beneficiaryCount)`, trả `PayoutResponse (transactionId (TXN-xxxxxx), bankReference (BANK-xxxxxxxx), status)`. Lỗi trả `soap:Fault` với `faultcode = soap:Client` và `faultstring` mô tả lỗi (ví dụ: Số dư không đủ).
 
-- **Yêu cầu nội bộ (Request):** `id, type, employeeId, branchSlug, title, content, attachmentUrl, status (pending/approved/rejected), reviewedBy, reviewNote, createdAt, updatedAt`
+- **Yêu cầu nội bộ (Request):** `id, type, employeeId, targetEmployeeId, branchSlug, title, content, attachmentUrl, status (pending/approved/rejected), reviewedBy, reviewNote, sourceShiftId, targetShiftId, createdAt, updatedAt`
   > `type` hợp lệ: `leave` (nghỉ phép), `overtime` (tăng ca), `advance` (tạm ứng lương), `shift_swap` (đổi ca), `work_supplement` (bổ sung công), `other`.
   > `shift_swap` cần thêm `sourceShiftId` và `targetShiftId` trong payload.
 
-- **Thông báo (Notification):** `id, targetEmployeeId (null = toàn hệ thống), branchSlug, title, body, isRead, createdAt`
+- **Thông báo (Notification):** `id, targetEmployeeId (null = toàn hệ thống), branchSlug, title, body, isRead, metadata, requestType, shiftName, shiftDate, shiftTime, shiftHours, senderName, senderRole, senderPhone, createdAt`
+
+- **Cài đặt thông báo (NotificationSetting):** `id (= user id), remindCheckIn, remindCheckOut, remindShift, notifyTask, notifyLeave, updatedAt`
 
 - **Bảng tin (Announcement/News):** `id, title, summary, content, date, tag, tagTone (danger/warning/success/primary/gray), pinned (bool)`
 
