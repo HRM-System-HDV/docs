@@ -116,7 +116,7 @@
 - **Cổng thanh toán liên ngân hàng SOAP (Banking SOAP Gateway):**
   - `GET /soap/payroll?wsdl`: Cung cấp file đặc tả WSDL chuẩn XML cho đối tác ngân hàng.
   - `POST /soap/payroll`: Tiếp nhận và xử lý điện chuyển tiền XML (`PayoutRequest` / `PayoutResponse`).
-  - `GET`, `PUT /api/soap-config`: Cấu hình mô phỏng môi trường ngân hàng (độ trễ phản hồi, trạng thái chứng chỉ mTLS, cổng kiểm tra kết nối).
+  - `GET`, `PUT /api/soap-config`: Cấu hình kết nối ngân hàng (endpoint, WSDL, chứng chỉ mTLS, IP cho phép); `POST /api/soap-config/ping` đo thật độ trễ và trạng thái endpoint.
 - **Quản lý Đơn từ & Phê duyệt (Requests):**
   - `GET /api/requests`: Danh sách đơn từ (nghỉ phép, đổi ca, giải trình công).
   - `POST /api/requests`: Nhân viên tạo đơn mới.

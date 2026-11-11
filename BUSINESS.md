@@ -58,7 +58,7 @@ HRM Enterprise là một nền tảng quản trị hợp nhất giải quyết t
    - `work-service` hiện **không** gọi danh sách này và **không** kiểm tra `BSSID`/`SSID` khi chấm công; API check-in chỉ nhận `employeeId`, `shiftId` (tùy chọn) và giờ chấm.
 4. **Cơ chế Phạt Vi phạm Theo Cấu hình:**
    - `attendance_configs` lưu sẵn các trường phạt (`latePenaltyAmount`, `earlyLeavePenaltyAmount`, `gracePeriodMinutes`…).
-   - Logic hiện tại chỉ áp phạt về sớm khi giờ check-out **trước mốc cứng 17:00** (`earlyLeavePenaltyAmount`, mặc định 0); chưa đối chiếu `scheduledStart`/`scheduledEnd`, chưa tính phạt đi muộn và chưa áp dụng thời gian ân hạn.
+   - Logic hiện tại phạt đi muộn khi check-in trễ hơn `scheduledStart` + `gracePeriodMinutes` (`latePenaltyAmount`, mặc định 20.000) và phạt về sớm khi check-out **trước mốc cứng 17:00** (`earlyLeavePenaltyAmount`, mặc định 0); check-out chưa đối chiếu `scheduledEnd` của ca.
 5. **Động cơ Bảng lương Tự động (Automated Payslip Engine):**
    - Cuối tháng, hệ thống tự động tổng hợp: Lấy mức lương cơ bản (`baseSalary`) từ `organization-service`, tự gọi sang `work-service` để cộng dồn toàn bộ tiền phạt vi phạm trong tháng (`totalPenalty`), và tự động tính `netSalary = baseSalary + bonus - totalPenalty`.
 6. **Chi trả Lương Tức thời qua Ngân hàng Chống Trùng (Idempotent Banking Payout):**
@@ -151,10 +151,13 @@ Mọi AI Chatbot hoặc lập trình viên khi truy vấn hoặc mở rộng h�
 2. **Quy tắc Xác thực Biên & Lan truyền Danh tính (Perimeter Auth & Identity Propagation):**
    - Client gọi vào Gateway (Port 4000). Gateway verify JWT in-memory bằng `JWT_SECRET` rồi tiêm 3 headers: `x-user-id`, `x-user-role`, `x-branch-slug`. Các service phía trong (4001–4005) tin cậy tuyệt đối 3 headers này, không verify lại JWT.
 3. **Quy tắc Tính Phạt Chấm công Hiện hành (Attendance Penalty Rule):**
-   - Check-in (`POST /api/attendance/checkin`) luôn ghi `status: "present"` và `penaltyAmount: 0`; **không** so sánh với `scheduledStart`, nên chưa có phạt đi muộn và chưa áp dụng `gracePeriodMinutes` (trường này mới chỉ là cấu hình).
+   - Check-in (`POST /api/attendance/checkin`) đối chiếu giờ vào với `scheduledStart` của ca tìm được theo `shiftId` (hoặc ca trong ngày của nhân viên) và **áp dụng `gracePeriodMinutes`**:
+     $$\text{Nếu } T_{\text{checkin}} > \text{scheduledStart} + \text{gracePeriodMinutes} \implies \text{status} = \text{"late"}, \quad \text{penaltyAmount} = \text{latePenaltyAmount (mặc định 20.000)}$$
+     `penaltyNote` ghi số phút muộn và giờ ca chuẩn. Không tìm được ca trong ngày hoặc ca thiếu `scheduledStart` thì **không phạt** (không có giờ chuẩn để đối chiếu).
    - Check-out (`POST /api/attendance/checkout`) so giờ ra với **mốc cứng 17:00** (không dùng `scheduledEnd` của ca):
-     $$\text{Nếu } T_{\text{checkout}} < 17{:}00 \implies \text{status} = \text{"early\_leave"}, \quad \text{penaltyAmount} = \text{earlyLeavePenaltyAmount (mặc định 0)}$$
-   - Các trường `latePenaltyAmount`, `gracePeriodMinutes`… vẫn được lưu trong `attendance_configs` nhưng logic hiện tại chưa dùng tới.
+     $$\text{Nếu } T_{\text{checkout}} < 17{:}00 \implies \text{status} = \text{"early\_leave"}, \quad \text{penaltyAmount} = \text{penaltyAmount đã ghi khi check-in} + \text{earlyLeavePenaltyAmount (mặc định 0)}$$
+     Hai khoản phạt trên cùng một bản ghi được **cộng dồn**, và `status` cũ không bị ghi đè về `"present"` khi nhân viên về đúng giờ ra.
+   - `netSalary` vì thế đã trừ tiền phạt đi muộn; các phiếu lương sinh trước khi bật luật này **không tự đổi** (chỉ thay đổi khi generate lại).
 4. **Công thức Tính Lương Thực Lĩnh (Net Salary Formula):**
    $$\text{netSalary} = \text{baseSalary} + \text{bonus} - \text{totalPenalty}$$
    - Trong đó: `baseSalary` do `organization-service` quản lý; `totalPenalty` là tổng tiền phạt của tất cả các bản ghi chấm công trong tháng lấy từ `work-service`.
@@ -531,10 +534,12 @@ Hệ thống tự động kích hoạt hàm `ensureSeeded()` khi khởi động 
 | id | email | name | role | roleTitle | branchSlug | password |
 |---|---|---|---|---|---|---|
 | `NV-0001` | `admin@company.com` | Trần Minh Tuấn | `admin` | Quản trị viên | `null` (toàn quyền mọi chi nhánh) | `123456` |
-| `NV-0002` | `manager@company.com` | Vũ Thành Công | `manager` | Quản lý Chi nhánh | `HN-1` | `123456` |
-| `NV-0003` | `nhanvien@company.com` | Nguyễn Thu Hà | `staff` | Nhân viên | `HN-1` | `123456` |
+| `NV-0002` | `manager@company.com` | Vũ Thành Công | `manager` | Quản lý Chi nhánh | `CN-0001` | `123456` |
+| `NV-0003` | `nhanvien@company.com` | Nguyễn Thu Hà | `staff` | Nhân viên | `CN-0001` | `123456` |
 
 Mật khẩu seed được băm bằng bcrypt 10 rounds. Khi hồ sơ nhân sự được tạo/cập nhật ở `organization-service`, tài khoản tương ứng được đồng bộ sang bảng `users` qua `POST /api/auth/sync-employee`.
+
+> Cập nhật 12/11/2026: `SEED_DEFS` trong `identity-service/src/services/AuthService.js` hiện chỉ còn `NV-0001`. Hai dòng `NV-0002`/`NV-0003` tồn tại vì có hồ sơ nhân sự thật trong `hrm_organization` (phòng Phần Mềm, chi nhánh `CN-0001` — slug đổi từ `CN01` ngày 12/11/2026) và được đồng bộ sang `users`; giá trị `HN-1` cũ là chi nhánh không còn tồn tại.
 
 ---
 
@@ -562,7 +567,7 @@ Mật khẩu seed được băm bằng bcrypt 10 rounds. Khi hồ sơ nhân sự
   7. Sinh cặp JSON Web Token:
      - `accessToken`: Hạn 15 phút, payload `{ userId, email, role, branchSlug }`.
      - `refreshToken`: Hạn 7 ngày, payload `{ userId, email, role, branchSlug, type: "refresh" }`.
-  8. Gắn Cookie `hrm-session` vào Response Header: `httpOnly: true`, `sameSite: "lax"`, `path: "/"`, `maxAge: 7 ngày`.
+  8. Gắn hai Cookie vào Response Header (cùng `httpOnly: true`, `sameSite: "lax"`, `path: "/"`): `hrm-session` chứa access token với `maxAge` đúng hạn token (15 phút), và `hrm-refresh` chứa refresh token (`maxAge` 7 ngày). Web không bao giờ đọc được token từ JavaScript.
 - **Dữ liệu phản hồi chuẩn (Response):**
   ```json
   {
@@ -593,18 +598,20 @@ Mật khẩu seed được băm bằng bcrypt 10 rounds. Khi hồ sơ nhân sự
 #### 3. Đăng xuất Khỏi Hệ thống (`POST /api/auth/logout`)
 - **Quyền:** Công khai.
 - **Quy trình Xử lý:**
-  1. Gọi lệnh xóa cookie: `res.clearCookie("hrm-session", { path: "/" })`.
-  2. Phản hồi HTTP 200: `{ "data": { "ok": true }, "message": "Đăng xuất thành công" }`.
+  1. Thu hồi refresh token của phiên: lấy từ Body/Header, **fallback cookie `hrm-refresh`** — web không cất token trong JS nên nếu chỉ đọc body thì đăng xuất sẽ chỉ xoá cookie còn token 7 ngày vẫn dùng được. Kèm đó thu hồi `deviceSessionId` nếu client gửi header `x-device-session-id`.
+  2. Gọi lệnh xóa cả hai cookie: `res.clearCookie("hrm-session", { path: "/" })` và `res.clearCookie("hrm-refresh", { path: "/" })`.
+  3. Phản hồi HTTP 200: `{ "data": { "ok": true }, "message": "Đăng xuất thành công" }`.
 
 #### 4. Cấp lại Access Token (`POST /api/auth/refresh`)
 - **Quyền:** Công khai.
-- **Dữ liệu đầu vào:** Trường `refreshToken` trong Body hoặc Header `x-refresh-token`.
+- **Dữ liệu đầu vào:** Trường `refreshToken` trong Body, Header `x-refresh-token`, hoặc **cookie `hrm-refresh`** (web chỉ có cookie vì token nằm trong storage httpOnly; mobile vẫn gửi body/header).
 - **Quy trình Xử lý:**
   1. Nếu thiếu token: Báo lỗi `400 VALIDATION_ERROR` ("Thiếu refresh token").
   2. Xác minh chữ ký token. Nếu token hết hạn hoặc sai chữ ký: Trả về HTTP `401` ("Refresh token không hợp lệ hoặc đã hết hạn").
   3. Kiểm tra tính chất token: Bắt buộc `payload.type === "refresh"`. Nếu là Access Token thường đưa vào: Trả về HTTP `401` ("Token cung cấp không phải là refresh token").
   4. Kiểm tra tài khoản trong DB để đảm bảo người dùng chưa bị xóa/khóa.
-  5. Cấp cặp Access Token mới (15m) và Refresh Token mới (7d), cập nhật lại cookie `hrm-session`.
+  5. Cấp cặp Access Token mới (15m) và Refresh Token mới (7d), cập nhật lại **cả hai** cookie `hrm-session` và `hrm-refresh`; refresh token cũ bị thu hồi ngay (rotation).
+- **Cách web dùng:** `frontend/src/lib/api.ts` bắt response `401` trên mọi API, gọi `POST /api/auth/refresh` **một lần duy nhất** (các request 401 đồng thời gộp chung một lời gọi), rồi thử lại request cũ; chỉ khi refresh thất bại mới đánh dấu phiên hết hạn và đá về `/login`.
 
 #### 5. Đổi Mật khẩu Chủ động (`POST /api/auth/change-password`)
 - **Quyền:** Yêu cầu đăng nhập (Protected).
@@ -1273,7 +1280,7 @@ Dịch vụ đã được cấu hình và chạy kiểm thử tự động với
      * Tiếp nhận nguyện vọng đăng ký ca từ Mobile App (`shift_registrations`, `POST /api/shifts/register`), tổng hợp danh sách phục vụ xếp lịch tuần (`RegTimetable`, `WeekWishes`).
   2. **Chấm công & Tính Phạt (Attendance & Penalties):**
      * Điểm danh vào ca (`checkin`) và ra ca (`checkout`); bản ghi lưu `date` dạng `DD-MM-YYYY`, giờ dạng `HH:MM`.
-     * Cấu hình phạt (`attendance_configs`) có các trường `latePenaltyAmount`, `earlyLeavePenaltyAmount`, `gracePeriodMinutes`… nhưng **logic hiện tại chỉ áp dụng phạt về sớm khi check-out trước mốc cứng 17:00** (dùng `earlyLeavePenaltyAmount`, mặc định 0). Chưa tính phạt đi muộn/ân hạn theo `scheduledStart` và chưa xác thực Wi-Fi khi chấm công.
+     * Cấu hình phạt (`attendance_configs`) có các trường `latePenaltyAmount`, `earlyLeavePenaltyAmount`, `gracePeriodMinutes`… **check-in phạt đi muộn** khi trễ hơn `scheduledStart` + `gracePeriodMinutes` (ghi `status: "late"`, `penaltyAmount = latePenaltyAmount`), **check-out phạt về sớm khi trước mốc cứng 17:00** và cộng dồn vào khoản phạt đã ghi khi check-in. Check-out vẫn chưa dùng `scheduledEnd`, và chưa xác thực Wi-Fi khi chấm công.
      * Cung cấp API giám sát chấm công toàn bộ nhân sự theo ngày phục vụ màn hình `staff_monitor` của Quản lý chi nhánh (`GET /api/attendance?branchSlug=&date=`).
      * Cung cấp API truy vấn lịch sử chấm công cho `payroll-service` (`GET /api/attendance?employeeId=&month=YYYY-MM`) để trích xuất tổng tiền phạt cộng dồn vào bảng lương tháng.
   3. **Quản lý Tác vụ Ca kíp (Task Management):**
@@ -1489,8 +1496,8 @@ Kho lưu trữ nhiệm vụ quản trị qua `/api/archive/work/*` (chỉ admin)
 |---|---|---|:---:|
 | `GET` | `/api/attendance/config` | Lấy bản ghi cấu hình `default`; nếu CSDL chưa có thì trả bộ mặc định trong bộ nhớ: `latePenaltyAmount: 20000`, `earlyLeavePenaltyAmount: 0`, `gracePeriodMinutes: 5`, `autoCloseShift: false`, `shiftSwapMode: "manual"`, `latePenaltyPct: 10`, `earlyLeavePenaltyPct: 10`, `earlyCheckinMinutes: 15`, `maxPenaltiesPerMonth: 10`, `deductOnCheckout: true`, `allowDoubleCheckin: true`, `maxCheckinsPerDay: 3`, `maxSwapsPerMonth: 3`, `requireReasonSwap: true`. | `200` |
 | `PUT` | `/api/attendance/config` | Cập nhật cấu hình chấm công với các field gửi lên (không whitelist). Nếu CSDL chưa có bản ghi `default`, thao tác chỉ cập nhật bộ nhớ của tiến trình hiện tại và **không ghi vào Postgres** (vẫn trả 200). | `200` |
-| `POST` | `/api/attendance/checkin` | Ghi nhận chấm công vào ca (`checkIn`).<br/>- Bắt buộc: `employeeId`; có thể gửi kèm `shiftId`.<br/>- `date` lấy theo ngày hiện tại (`DD-MM-YYYY`), giờ vào lấy từ `time` hoặc giờ hệ thống (`HH:MM`).<br/>- Luôn ghi `status: "present"`, `penaltyAmount: 0`; **không** kiểm tra Wi-Fi, không đối chiếu giờ ca và không tính phạt đi muộn. | `201` / `400` |
-| `POST` | `/api/attendance/checkout` | Ghi nhận chấm công ra ca (`checkOut`) & tính phạt về sớm:<br/>- Tìm bản ghi chấm công **mới nhất của nhân viên chưa có `checkOut`** (không giới hạn trong ngày).<br/>- Nếu chưa có bản ghi: tự tạo check-in lúc `08:00`; **chỉ ở chế độ in-memory là `checkOut` được lưu**, ở chế độ Postgres bản ghi mới vẫn có `checkOut = null` trong CSDL (response chỉ phản ánh giá trị vừa gán trong bộ nhớ).<br/>- Giờ ra lấy từ `time` hoặc mặc định `17:30`.<br/>- Nếu giờ ra **trước 17:00**: `status = "early_leave"`, `penaltyAmount = earlyLeavePenaltyAmount`; ngược lại `status = "present"`, `penaltyAmount = 0`. Mốc 17:00 là cố định, không dùng `scheduledEnd` của ca. | `200` / `400` |
+| `POST` | `/api/attendance/checkin` | Ghi nhận chấm công vào ca (`checkIn`).<br/>- Bắt buộc: `employeeId`; có thể gửi kèm `shiftId`.<br/>- `date` lấy theo ngày hiện tại (`DD-MM-YYYY`), giờ vào lấy từ `time` hoặc giờ hệ thống (`HH:MM`).<br/>- So giờ vào với `scheduledStart` + `gracePeriodMinutes` của ca tìm được: trễ thì `status: "late"`, `penaltyAmount = latePenaltyAmount`, `penaltyNote` ghi số phút muộn; trong ân hạn hoặc không có ca thì `status: "present"`, `penaltyAmount: 0`. **Không** kiểm tra Wi-Fi. | `201` / `400` |
+| `POST` | `/api/attendance/checkout` | Ghi nhận chấm công ra ca (`checkOut`) & tính phạt:<br/>- Tìm bản ghi chấm công **mới nhất của nhân viên chưa có `checkOut`** (không giới hạn trong ngày).<br/>- Chế độ Postgres mà **không** có bản ghi mở: trả `404` ("Không tìm thấy bản ghi chấm công đang mở để chốt ra"), không tự tạo check-in hộ. Chế độ in-memory: tự tạo check-in lúc `08:00`.<br/>- Giờ ra lấy từ `time`/`checkoutTime` hoặc giờ hệ thống (`HH:MM`).<br/>- Nếu giờ ra **trước 17:00**: `status = "early_leave"`, `penaltyAmount = phạt đi muộn đã ghi khi check-in + earlyLeavePenaltyAmount`; ngược lại giữ nguyên `penaltyAmount` và `status` (`"late"` hoặc `"present"`) mà check-in đã xác định. Mốc 17:00 là cố định, không dùng `scheduledEnd` của ca. | `200` / `400` / `404` |
 | `GET` | `/api/attendance` | Tra cứu lịch sử chấm công (sắp xếp mới nhất theo `createdAt`), bộ lọc:<br/>- `?employeeId=` & `?month=YYYY-MM`: Dùng cho `payroll-service` lấy toàn bộ tiền phạt trong tháng để trừ lương.<br/>- `?branchSlug=` & `?date=DD-MM-YYYY`: Dùng cho màn hình giám sát nhân sự chi nhánh trong ngày (`staff_monitor`); chỉ khớp các bản ghi có `shiftId` thuộc ca của chi nhánh đó. Chế độ in-memory **bỏ qua** `branchSlug`. | `200` |
 
 #### 4. Quản lý Tác vụ Ca kíp (Tasks API)
@@ -1654,7 +1661,7 @@ Dịch vụ đã được cấu hình và chạy kiểm thử tự động với
 - **Trạng thái đơn (`status`):** `pending` (chờ duyệt) $\rightarrow$ `approved` (đã duyệt) HOẶC `rejected` (bị từ chối). Chỉ có đơn ở trạng thái `pending` mới được phép xóa hoặc phê duyệt.
 - **Tự động hóa khi Duyệt Đơn (Post-approval Automation):**
   1. **Sinh Thông báo Tức thì:** Hệ thống tự động tạo bản ghi `Notification` gửi tới đúng nhân viên làm đơn (`targetEmployeeId = row.employeeId`) thông báo kết quả phê duyệt kèm lời nhắn phản hồi của quản lý (`reviewNote`).
-  2. **Tự động Hoán đổi Ca làm việc:** Nếu đơn là `shift_swap` và có `sourceShiftId`: Service tự động gọi sang `work-service` (`WorkClient.updateShift(sourceShiftId, { employeeId: row.employeeId })`) để gán lại nhân sự cho ca trực. Lời gọi này thực hiện theo cơ chế *best-effort* (không làm đứt gãy luồng duyệt đơn nếu `work-service` phản hồi chậm).
+  2. **Tự động Hoán đổi Ca làm việc:** Nếu đơn là `shift_swap` và có `sourceShiftId` kèm `targetEmployeeId`: Service gọi sang `work-service` hoán đổi **hai chiều** — `PUT /api/shifts/:sourceShiftId { employeeId: targetEmployeeId }` và, khi có `targetShiftId`, `PUT /api/shifts/:targetShiftId { employeeId: row.employeeId }`. Việc đồng bộ diễn ra **trước** khi ghi `status = "approved"`: nếu `work-service` lỗi thì luồng duyệt dừng lại với 5xx, đơn vẫn ở `pending` để quản lý duyệt lại (không còn chế độ best-effort, vốn để lại đơn đã duyệt nhưng ca không đổi và không thể duyệt lại). Nếu lời gọi thứ hai hỏng sau khi lời gọi thứ nhất thành công, service hoàn tác ca nguồn về chủ cũ để không ai phải mang hai ca một lúc; hoàn tác thất bại sẽ được ghi log kèm mã ca để xử lý thủ công.
 
 #### 3. Quản lý Thông báo Người dùng (Notification System)
 - **2 Chế độ gửi:**
@@ -1903,10 +1910,12 @@ sequenceDiagram
     Note over Manager: Quản lý đăng nhập Web Portal xem danh sách đơn chờ duyệt
     Manager->>GW: PUT /api/requests/:id/approve { reviewedBy: "mgr-1", reviewNote: "Đồng ý" }
     GW->>INT: Forward approve request
+    INT->>WORK: PUT /api/shifts/shift-123 { employeeId: otherStaffId } (WorkClient)
+    WORK-->>INT: 200 OK (ca nguồn đã sang người được nhờ)
+    INT->>WORK: PUT /api/shifts/shift-456 { employeeId: staffId } (WorkClient)
+    WORK-->>INT: 200 OK (ca đích đã sang người gửi đơn)
     INT->>DB: Cập nhật status = "approved"
     INT->>DB: Tự động tạo Notification cho nhân viên (targetEmployeeId: staffId)
-    INT->>WORK: PUT /api/shifts/shift-123 { employeeId: staffId } (WorkClient)
-    WORK-->>INT: 200 OK (Đã đổi nhân sự trong ca làm việc)
     INT-->>Manager: 200 OK { data: request, message: "Duyệt yêu cầu thành công" }
 ```
 
@@ -2008,8 +2017,9 @@ sequenceDiagram
 #### 7. Cấu hình Cổng SOAP (`/api/soap-config`)
 | Method | Đường dẫn | Chức năng nghiệp vụ | Mã phản hồi |
 |---|---|---|:---:|
-| `GET` | `/api/soap-config` | Lấy cấu hình cổng SOAP hiện tại (endpoint, WSDL, service, port, securityMode, allowedIPs, trạng thái ping). | `200` |
+| `GET` | `/api/soap-config` | Lấy cấu hình cổng SOAP hiện tại (endpoint, WSDL, service, port, securityMode, allowedIPs, kết quả lần ping gần nhất). Ba trường `status`, `lastPingTime`, `avgResponseTime` là **kết quả đo**, không phải tham số cấu hình: chưa ping lần nào thì `status = "unknown"` và hai trường còn lại `null`. | `200` |
 | `PUT` | `/api/soap-config` | Cập nhật cấu hình cổng SOAP (chỉ nhận các trường hợp lệ). | `200` |
+| `POST` | `/api/soap-config/ping` | **Ping thật** tới `wsdlUrl` (fallback `endpointUrl`) với timeout 5000ms và ghi lại kết quả vào cấu hình `default`: `healthy` (HTTP 2xx/3xx), `degraded` (HTTP ≥ 400), `down` (không nối được/hết timeout), `unknown` (chưa cấu hình endpoint). Luôn trả `200` vì phép đo đã chạy; trạng thái nằm trong `data.status`, `data.responseTime` (số ms đo được) và `data.error`. | `200` |
 
 ---
 
@@ -2086,5 +2096,5 @@ Dịch vụ đã được cấu hình bộ kiểm thử tự động với `node
 | **Bấm chi lương 2 lần với cùng một `idempotencyKey`** | `payroll-service` phát hiện key đã tồn tại, trả lại dữ liệu giao dịch cũ, không trừ tiền thêm. | `200 OK` | `{ data: { ...giaoDichCu, deduped: true }, message: "Thao tác thành công" }` |
 | **Tài khoản công ty không đủ số dư để chi lương** | `payroll-service` từ chối thực hiện lệnh chi, bảo vệ số dư. Cổng SOAP chuyển thành `soap:Fault`. | `422 Unprocessable` (REST) / `500 Fault` (SOAP) | `{ error: { code: "INSUFFICIENT_FUNDS", message: "Số dư không đủ" } }` |
 | **Nhân viên check-out trước 17:00** | `work-service` ghi nhận về sớm và áp mức phạt `earlyLeavePenaltyAmount` (mặc định 0). | `200 OK` | Bản ghi attendance với `status: "early_leave"`, `penaltyAmount = earlyLeavePenaltyAmount` |
-| **Quản lý duyệt đơn đổi ca (`shift_swap`)** | `integration-service` cập nhật đơn, sinh `Notification` và gọi `WorkClient` (`PUT /api/shifts/:sourceShiftId`) để gán `employeeId` của ca nguồn cho nhân viên gửi đơn. Lỗi gọi work-service chỉ ghi cảnh báo, không chặn việc duyệt. | `200 OK` | Đơn chuyển `approved`; ca nguồn được cập nhật `employeeId` (không hoán đổi hai nhân sự). |
+| **Quản lý duyệt đơn đổi ca (`shift_swap`)** | `integration-service` gọi `WorkClient` hoán đổi **hai chiều** trước (`PUT /api/shifts/:sourceShiftId { employeeId: targetEmployeeId }` và `PUT /api/shifts/:targetShiftId { employeeId: người gửi đơn }`), chỉ khi cả hai lời gọi thành công mới cập nhật đơn sang `approved` rồi sinh `Notification`. | `200 OK`; nếu work-service lỗi thì `502 BAD_GATEWAY`. | Hai ca đổi nhân sự cho nhau, đơn chuyển `approved`. Khi work-service lỗi: đơn **ở lại `pending`**, không thông báo nào được sinh, quản lý duyệt lại được. |
 
