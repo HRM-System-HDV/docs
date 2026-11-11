@@ -332,3 +332,16 @@ Các mục sau không có trong tài liệu phân công. Không tự quyết đ�
 7. Khi báo kết quả, nói rõ đã chạy lệnh nào và kết quả ra sao. Không báo "pass" khi chưa chạy.
 8. Ưu tiên theo thứ tự: gateway + identity, đến tích hợp API mobile, đến build iOS, cuối cùng là kết nối, demo REST idempotent và SOAP end-to-end, optimize.
 9. **Luật cập nhật tiến độ (bắt buộc):** sau khi hoàn thành mỗi task và trước khi nhờ review/merge PR, phải cập nhật file `Work_flow` của mình — đánh dấu `[x]` các việc đã xong, ghi rõ nhánh/PR liên quan và việc nào đang chờ thành viên khác. File `Work_flow` là kênh thông báo tiến độ chính cho cả nhóm; không để người khác phải hỏi mới biết làm đến đâu.
+
+---
+
+## 11. Tiến độ đợt "Lưu trữ" (hoàn thành 10-11-2026)
+
+Workspace hiện không phải git repo nên không tạo nhánh/PR; thay đổi nằm thẳng trong cây mã nguồn.
+
+- [x] Gateway: proxy `/api/files` → integration, `/api/archive/work` → work, `/api/archive/integration` → integration; luật phân quyền mọi method `/api/archive` = admin, `POST|DELETE /api/files` = admin, GET file = mọi vai trò đăng nhập. `tests/authorize.test.js` 87/87 pass.
+- [x] Frontend: trang `/dashboard/archive` (guard admin) + `features/archive/` (hub 3 tab, panel xem trước/chạy theo batch, bảng phân trang, modal chi tiết + khôi phục); menu "Lưu trữ" chỉ admin; module backlog "Lưu trữ".
+- [x] Frontend: bỏ fallback lưu base64 vào DB khi upload lỗi ở `EmployeeDetailModal`; downscale ≤1600px trước upload (`lib/imageUpload.ts`); `TaskProof` dùng picker thật thay ảnh mock. `npx tsc --noEmit` 0 lỗi, `npm run build` thành công.
+- [x] Mobile: `ApiClient.imageHeadersFor` gắn Bearer cho ảnh cùng origin gateway; `image_helper` + 2 chỗ `Image.network` trong tasks dùng header có điều kiện; xoá mọi nhãn hiệu dịch vụ ảnh cũ trong comment/thông báo. `flutter analyze` 0 vấn đề, `flutter test` 15/15 pass.
+- [x] E2e browser (admin): xem trước → xác nhận → lưu trữ 3 bản ghi → xem chi tiết (ảnh minh chứng tải 200) → khôi phục về bảng sống; staff bị 403 ở archive, vẫn GET được file.
+- [ ] Việc thủ công ngoài code: rotate/xoá API key dịch vụ ảnh cũ đã lộ trong lịch sử git (xem ghi chú ở `E_Work_Flow.md` §11).

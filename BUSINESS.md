@@ -33,7 +33,7 @@
 | **Kiểu Kiến Trúc (Architecture)** | On-Premises SOA / Microservices, Eventual Consistency, Database-per-service (5 PostgreSQL độc lập) |
 | **Giao thức Truyền dẫn** | RESTful JSON Envelope (`{ data }`, `{ error }`), SOAP XML 1.1/1.2 (`text/xml`), HTTP internal calls (timeout 5000ms) |
 | **Công nghệ Tầng Client** | Web Portal (Next.js 16, App Router, Tailwind CSS) + Mobile App (Flutter 3.x, Material 3, iOS) |
-| **Công nghệ Tầng Backend** | Node.js (v20+), Express.js, Prisma ORM, JSON Web Token (JWT), Bcrypt, Cloudinary SDK |
+| **Công nghệ Tầng Backend** | Node.js (v20+), Express.js, Prisma ORM, JSON Web Token (JWT), Bcrypt, lưu trữ file nội bộ trên ổ đĩa (`STORAGE_DIR`) |
 | **Phạm vi Cổng (Ports)** | `3000` (Web Portal) \| `4000` (API Gateway) \| `4001` (Identity) \| `4002` (Org) \| `4003` (Work) \| `4004` (Payroll) \| `4005` (Integration) |
 | **Chế độ Xác thực** | Multi-source: HttpOnly Cookie `hrm-session` (Web) + Header `Authorization: Bearer <token>` (Mobile/Client) |
 | **Cơ chế Lan truyền Danh tính** | API Gateway verify JWT in-memory và tiêm các header: `x-user-id`, `x-user-role`, `x-branch-slug` xuống các microservices |
@@ -996,6 +996,7 @@ sequenceDiagram
 | `DATABASE_URL` | `postgresql://...` | **Có** (cho DB thật) | Chuỗi kết nối tới CSDL `hrm_organization` trên Supabase |
 | `CORS_ORIGIN` | `http://localhost:3000` | Có | Danh sách Origin được phép truy cập |
 | `IDENTITY_URL` | `http://localhost:4001` | Không | Địa chỉ `identity-service` để đồng bộ tài khoản nhân sự; lỗi đồng bộ chỉ ghi cảnh báo, không chặn nghiệp vụ |
+| `INTEGRATION_SERVICE_URL` | `http://localhost:4005` | Không | Địa chỉ gọi nội bộ sang `integration-service` để xóa avatar/CCCD khi xóa nhân viên (best-effort, timeout 5000ms) |
 
 ---
 
@@ -1401,19 +1402,63 @@ model ShiftRegistration {
 #### 6. Bảng Tác vụ Ca kíp (`tasks` - Prisma Model `Task`)
 ```prisma
 model Task {
-  id          String   @id @default(cuid())
-  title       String
-  description String?
-  assignedTo  String?  // Mã nhân viên phụ trách (employeeId)
-  branchSlug  String?
-  dueDate     String?
-  status      String   @default("pending") // pending | in_progress | done
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id               String   @id @default(cuid())
+  title            String
+  description      String?
+  assignedTo       String?  // Mã nhân viên phụ trách (employeeId)
+  branchSlug       String?
+  dueDate          String?
+  status           String   @default("pending") // pending | inProgress | overdue | completed
+  sourceType       String?  @default("manager")
+  assignedByName   String?
+  shiftName        String?
+  priority         String?  @default("normal")
+  assignedToEmail  String?
+  assignedToName   String?
+  completedAt      String?
+  requirePhoto     Boolean? @default(false)
+  proofPhotoUrl    String?  // URL ảnh minh chứng (/api/files/... hoặc URL cũ)
+  photoSubmittedBy String?
+  photoSubmittedAt String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
 
   @@map("tasks")
 }
+
+// Kho lưu trữ nhiệm vụ cũ — mirror toàn bộ trường Task, giữ id gốc để khôi phục.
+// Điều kiện chuyển: status = "completed" và createdAt < cutoff. Ảnh minh chứng không bị xóa.
+model ArchivedTask {
+  id               String   @id // id gốc của Task
+  title            String
+  description      String?
+  assignedTo       String?
+  branchSlug       String?
+  dueDate          String?
+  status           String
+  sourceType       String?
+  assignedByName   String?
+  shiftName        String?
+  priority         String?
+  assignedToEmail  String?
+  assignedToName   String?
+  completedAt      String?
+  requirePhoto     Boolean?
+  proofPhotoUrl    String?
+  photoSubmittedBy String?
+  photoSubmittedAt String?
+  createdAt        DateTime
+  updatedAt        DateTime
+  archivedAt       DateTime @default(now())
+  archiveBatchId   String
+
+  @@index([archivedAt])
+  @@index([createdAt])
+  @@map("archived_tasks")
+}
 ```
+
+Kho lưu trữ nhiệm vụ quản trị qua `/api/archive/work/*` (chỉ admin): `preview`/`run` nhận `{ months? | cutoffDate?, types: ["task"], limit? }` với khuôn batch giống archive của integration-service (xem §7.2.7); `GET /api/archive/work/tasks` phân trang, `GET .../:id` chi tiết, `POST .../:id/restore` khôi phục (409 nếu id đã tồn tại ở bảng sống).
 
 ---
 
@@ -1518,6 +1563,7 @@ sequenceDiagram
 | `NODE_ENV` | `development` | Không | Môi trường triển khai (`development` / `production`) |
 | `DATABASE_URL` | `postgresql://...` | **Có** (cho DB thật) | Chuỗi kết nối tới CSDL `hrm_work` trên Supabase |
 | `CORS_ORIGIN` | `http://localhost:3000` | Có | Danh sách Origin được phép truy cập |
+| `INTEGRATION_SERVICE_URL` | `http://localhost:4005` | Không | Địa chỉ gọi nội bộ sang `integration-service` để xóa ảnh minh chứng khi xóa nhiệm vụ (best-effort, timeout 5000ms) |
 
 ---
 
@@ -1550,7 +1596,8 @@ Dịch vụ đã được cấu hình và chạy kiểm thử tự động với
   4. **Cấu hình Wi-Fi Chống Gian lận (Wi-Fi Geofencing Registry):** Quản lý danh sách Wi-Fi hợp lệ của từng chi nhánh (`BSSID`, `SSID`, mã chi nhánh `branch`). Đây là danh mục cấu hình độc lập; `work-service` hiện **chưa** gọi tới để xác thực khi chấm công.
   5. **Truyền thông Nội bộ & Quy chế (News & Regulations):** Quản lý bảng tin thông báo, văn bản chính sách, điều lệ công ty có phân loại tone màu, ghim ưu tiên và phiên bản văn bản.
   6. **Cấu hình Kết nối Cổng SOAP (`soap-config`):** Quản lý địa chỉ WSDL, endpoint, chế độ bảo mật và danh sách IP ngân hàng được phép truy cập (`allowedIPs`).
-  7. **Dịch vụ Tải ảnh Đa phương tiện (`/api/upload`):** Tích hợp Cloudinary SDK tiếp nhận ảnh Base64 / Data URL (ảnh minh chứng giải trình, chứng từ y tế, avatar) và lưu trữ bảo mật trên đám mây.
+  7. **Dịch vụ Tải ảnh Đa phương tiện (`/api/upload`):** Tiếp nhận ảnh Base64 / Data URL (ảnh minh chứng nhiệm vụ, chứng từ đơn từ, avatar, CCCD), kiểm tra MIME + magic bytes, lưu vào thư mục nội bộ `STORAGE_DIR` và phục vụ qua `GET /api/files/*` sau xác thực.
+  8. **Kho Lưu trữ Dữ liệu cũ (Archive):** Chuyển đơn từ đã xử lý và thông báo đã đọc quá hạn vào bảng archive (`archived_requests`, `archived_notifications`), giữ xem lại và khôi phục được; quản trị qua `/api/archive/integration/*` (chỉ admin).
 
 ```
                       ┌──────────────────────────────────────────────┐
@@ -1625,10 +1672,22 @@ Dịch vụ đã được cấu hình và chạy kiểm thử tự động với
 - **Bảng tin (`news`):** Lưu trữ tin tức truyền thông nội bộ, bài viết tuyển dụng, chúc mừng sinh nhật, vinh danh nhân viên xuất sắc. Hỗ trợ gắn thẻ `tag`, phân loại tone màu giao diện `tagTone` (`danger`, `warning`, `success`, `primary`, `gray`), và cờ ưu tiên ghim đầu trang `pinned`.
 - **Quy chế (`regulations`):** Lưu trữ văn bản quy định, chính sách thưởng phạt, nội quy lao động, quy trình an toàn. Có mã văn bản `code`, số phiên bản `version` (mặc định `"1.0"`), phạm vi áp dụng `scope`, ngày hiệu lực `effectiveDate`, ngày hết hạn `expiryDate`, và số lượng tệp đính kèm `attachments`.
 
-#### 6. Dịch vụ Tải ảnh Đa phương tiện Cloudinary (`/api/upload`)
-- Nhận dữ liệu ảnh dưới dạng chuỗi `base64`, `dataUrl`, hoặc `image`.
-- Tự động tải lên dịch vụ đám mây Cloudinary vào thư mục `folder: "hrm"`.
-- Trả về đường dẫn CDN an toàn (`secure_url`), định dạng, kích thước và định danh `public_id`. Dùng để lưu trữ ảnh đại diện, ảnh chụp giấy khám sức khỏe (đơn nghỉ ốm), hoặc hóa đơn chứng từ tạm ứng.
+#### 6. Dịch vụ Tải ảnh Đa phương tiện Nội bộ (`/api/upload`, `/api/files`)
+- Nhận dữ liệu ảnh dưới dạng chuỗi `file`, `base64`, `dataUrl`, hoặc `image` (Data URL `data:image/...;base64,...`).
+- Kiểm tra bắt buộc: MIME whitelist `image/jpeg|png|webp` khớp magic bytes, dung lượng sau giải mã ≤ 10MB, `folder` khớp `^hrm(/[a-z0-9_-]+){0,2}$` (mặc định `"hrm"`; các folder dùng thực tế: `hrm/avatars`, `hrm/cccd`, `hrm/tasks`).
+- Lưu file vào `STORAGE_DIR/<folder>/<uuid>.<ext>` trên ổ đĩa máy chủ, ghi bản ghi đăng ký `FileAsset` (publicId, đường dẫn, MIME, bytes, người tải) vào `hrm_integration`.
+- Trả về `{ data: { url, secure_url, publicId, public_id, format, width, height, bytes } }`; `url` là địa chỉ tuyệt đối `${PUBLIC_BASE_URL}/api/files/<publicId>` qua Gateway, yêu cầu đăng nhập (cookie `hrm-session` cho Web, Bearer cho Mobile).
+- `GET /api/files/:folder/:name` stream file (mọi vai trò đã đăng nhập); `DELETE /api/files/:folder/:name` xóa file (chỉ admin qua Gateway; service nội bộ gọi thẳng cổng 4005 khi xóa bản ghi sở hữu ảnh). URL cũ không thuộc `/api/files/` thì thao tác xóa là no-op.
+- Đối soát ảnh mồ côi: `POST /api/files/scan-orphans` (admin) liệt kê file trên đĩa không còn trong đăng ký hoặc đã xóa mềm, bỏ qua file mới hơn `graceHours` (mặc định 24); `POST /api/files/purge-orphans { publicIds }` chỉ xóa đúng danh sách được duyệt.
+- Ảnh của bản ghi đã archive **không bao giờ bị xóa** — archive chỉ chuyển row DB.
+
+#### 7. Kho Lưu trữ Dữ liệu cũ (`/api/archive/integration`)
+- Chỉ admin được gọi qua Gateway. Phạm vi v1: `Request` có `status IN (approved, rejected)` và `Notification` có `isRead = true`, kèm `createdAt < cutoff`.
+- `cutoff` tính từ `months` (≥ 1, server tự tính `now − months`) hoặc `cutoffDate` ISO — chỉ nhận đúng một trong hai.
+- `POST /api/archive/integration/preview { months?|cutoffDate?, types }` trả `{ cutoffDate, counts }` để xem trước số lượng.
+- `POST /api/archive/integration/run` cùng payload + `limit` (mặc định 500, tối đa 2000): chuyển từng batch trong một transaction (`createMany` vào bảng archive + `deleteMany` bảng sống), trả `{ batchId, moved, remaining }`; client lặp tới khi `remaining = 0` để mỗi lời gọi nằm trong timeout 5000ms.
+- Bản ghi archive giữ nguyên `id` gốc, thêm `archivedAt`, `archiveBatchId`. `GET .../requests|notifications` phân trang + lọc; `GET .../:id` xem chi tiết; `POST .../:id/restore` khôi phục về bảng sống (409 `DUPLICATE_RESOURCE` nếu id đã tồn tại).
+- `Backlog` là nhật ký kiểm toán — **không bao giờ archive**.
 
 ---
 
@@ -1751,6 +1810,73 @@ model WifiConfig {
 
   @@map("wifi_configs")
 }
+
+// Đăng ký file upload nội bộ — sở hữu bởi integration-service, phục vụ đối soát mồ côi
+model FileAsset {
+  id          String    @id // publicId, vd "hrm/avatars/<uuid>"
+  folder      String
+  storagePath String    // đường dẫn tương đối trong STORAGE_DIR, vd "hrm/avatars/<uuid>.jpg"
+  mime        String
+  bytes       Int
+  width       Int       @default(0)
+  height      Int       @default(0)
+  uploadedBy  String?   // x-user-id do gateway xác thực
+  createdAt   DateTime  @default(now())
+  deletedAt   DateTime? // xóa mềm để đối soát
+
+  @@map("file_assets")
+}
+
+// Kho lưu trữ đơn từ cũ — mirror toàn bộ trường Request, giữ id gốc để khôi phục
+model ArchivedRequest {
+  id               String   @id // id gốc của Request
+  type             String
+  employeeId       String
+  targetEmployeeId String?
+  branchSlug       String?
+  title            String
+  content          String
+  attachmentUrl    String?
+  status           String
+  reviewedBy       String?
+  reviewNote       String?
+  sourceShiftId    String?
+  targetShiftId    String?
+  createdAt        DateTime
+  updatedAt        DateTime
+  archivedAt       DateTime @default(now())
+  archiveBatchId   String
+
+  @@index([archivedAt])
+  @@index([createdAt])
+  @@map("archived_requests")
+}
+
+// Kho lưu trữ thông báo cũ — mirror toàn bộ trường Notification, giữ id gốc
+model ArchivedNotification {
+  id               String   @id // id gốc của Notification
+  targetEmployeeId String?
+  branchSlug       String?
+  title            String
+  body             String
+  isRead           Boolean
+  metadata         Json?
+  requestType      String?
+  shiftName        String?
+  shiftDate        String?
+  shiftTime        String?
+  shiftHours       String?
+  senderName       String?
+  senderRole       String?
+  senderPhone      String?
+  createdAt        DateTime
+  archivedAt       DateTime @default(now())
+  archiveBatchId   String
+
+  @@index([archivedAt])
+  @@index([createdAt])
+  @@map("archived_notifications")
+}
 ```
 
 ---
@@ -1861,10 +1987,23 @@ sequenceDiagram
 | `GET` / `POST` | `/api/regulations` | Danh sách văn bản quy chế / Ban hành quy chế mới. | `200` / `201` |
 | `PUT` / `DELETE` | `/api/regulations/:id` | Cập nhật quy chế / Hủy hiệu lực quy chế. | `200` / `404` |
 
-#### 6. Tải ảnh Lên Đám mây (`/api/upload`)
+#### 6. Tải ảnh Nội bộ (`/api/upload`, `/api/files`)
 | Method | Đường dẫn | Chức năng nghiệp vụ & Định dạng Payload | Mã phản hồi |
 |---|---|---|:---:|
-| `POST` | `/api/upload` | Tải ảnh Base64 / Data URL lên Cloudinary thư mục `hrm`. Nhận `{ file: "data:image/png;base64,..." }` (chấp nhận thêm `image`, `dataUrl`, `base64`). Trả về `{ data: { url, secure_url, publicId, public_id, format, width, height, bytes } }` — giữ `url`/`publicId` để tương thích web/mobile hiện có, đồng thời có `secure_url`/`public_id` theo hợp đồng. | `200` / `400` |
+| `POST` | `/api/upload` | Tải ảnh Base64 / Data URL vào lưu trữ nội bộ thư mục `hrm`. Nhận `{ file: "data:image/png;base64,..." }` (chấp nhận thêm `image`, `dataUrl`, `base64`), `folder` tùy chọn. Trả về `{ data: { url, secure_url, publicId, public_id, format, width, height, bytes } }` — `url` tuyệt đối dạng `${PUBLIC_BASE_URL}/api/files/<publicId>`. | `200` / `400` |
+| `GET` | `/api/files/:folder/:name` | Stream file ảnh (yêu cầu đăng nhập; mọi vai trò). | `200` / `404` |
+| `DELETE` | `/api/files/:folder/:name` | Xóa file (admin qua Gateway; service nội bộ gọi thẳng 4005). Idempotent. | `200` / `404` |
+| `POST` | `/api/files/scan-orphans` | Admin: liệt kê ảnh mồ côi `{ graceHours? }` → `{ orphans, totalBytes }`. | `200` |
+| `POST` | `/api/files/purge-orphans` | Admin: xóa danh sách `{ publicIds }` → `{ purged }`. | `200` |
+
+#### 6b. Kho Lưu trữ Dữ liệu cũ (`/api/archive/*` — chỉ admin)
+| Method | Đường dẫn | Chức năng nghiệp vụ & Định dạng Payload | Mã phản hồi |
+|---|---|---|:---:|
+| `POST` | `/api/archive/work/preview`<br/>`/api/archive/integration/preview` | Xem trước số lượng: `{ months? \| cutoffDate?, types }` → `{ cutoffDate, counts }`. Work: `types:["task"]`; Integration: `types:["request","notification"]`. | `200` / `400` |
+| `POST` | `/api/archive/work/run`<br/>`/api/archive/integration/run` | Chuyển batch vào kho lưu trữ (limit mặc định 500, tối đa 2000) → `{ batchId, moved, remaining }`; lặp tới `remaining = 0`. | `200` / `400` |
+| `GET` | `/api/archive/work/tasks`<br/>`/api/archive/integration/requests`<br/>`/api/archive/integration/notifications` | Danh sách phân trang `?page&pageSize&q&branchSlug&from&to` (+ `assignedTo`/`employeeId`/`targetEmployeeId`/`status`). | `200` |
+| `GET` | `.../:id` | Chi tiết bản ghi archive kèm `archivedAt`, `archiveBatchId`. | `200` / `404` |
+| `POST` | `.../:id/restore` | Khôi phục về bảng sống, giữ id gốc. | `200` / `404` / `409` |
 
 #### 7. Cấu hình Cổng SOAP (`/api/soap-config`)
 | Method | Đường dẫn | Chức năng nghiệp vụ | Mã phản hồi |
@@ -1883,9 +2022,9 @@ sequenceDiagram
 | `DATABASE_URL` | `postgresql://...` | **Có** (khi chạy DB) | Chuỗi kết nối tới CSDL `hrm_integration` |
 | `PAYROLL_SERVICE_URL` | `http://localhost:4004` | **Có** | Địa chỉ gọi nội bộ sang `payroll-service` |
 | `WORK_SERVICE_URL` | `http://localhost:4003` | **Có** | Địa chỉ gọi nội bộ sang `work-service` để cập nhật ca kíp |
-| `CLOUDINARY_CLOUD_NAME` | `...` | Tùy chọn | Tên tài khoản lưu trữ Cloudinary |
-| `CLOUDINARY_API_KEY` | `...` | Tùy chọn | API Key xác thực Cloudinary |
-| `CLOUDINARY_API_SECRET` | `...` | Tùy chọn | Secret key bảo mật Cloudinary |
+| `STORAGE_DIR` | `./storage` | Không | Thư mục lưu file ảnh nội bộ (phải nằm trên volume được backup cùng Postgres dump) |
+| `PUBLIC_BASE_URL` | `http://localhost:4000` | Không | Địa chỉ Gateway dùng ghép URL tuyệt đối trả về cho client (`${PUBLIC_BASE_URL}/api/files/<publicId>`) |
+| `MAX_UPLOAD_BYTES` | `10485760` | Không | Dung lượng ảnh tối đa sau giải mã base64 (mặc định 10MB) |
 
 ---
 
@@ -1930,7 +2069,8 @@ Dịch vụ đã được cấu hình bộ kiểm thử tự động với `node
 | Thông báo người dùng (Broadcast hoặc đích danh), Đánh dấu đã đọc, Cài đặt nhận thông báo | `integration-service` | `4005` | `GET/POST /api/notifications`<br/>`PUT /api/notifications/:id/read`<br/>`GET/PUT /api/notifications/settings` | `hrm_integration` (`notifications`, `notification_settings`) |
 | Đăng ký Router Wi-Fi chi nhánh (SSID, BSSID MAC) | `integration-service` | `4005` | `GET/POST /api/wifi-configs` | `hrm_integration` (`wifi_configs`) |
 | Bảng tin truyền thông nội bộ, Văn bản chính sách quy chế | `integration-service` | `4005` | `GET/POST /api/news`<br/>`GET/POST /api/regulations` | `hrm_integration` (`news`, `regulations`) |
-| Tải ảnh avatar, chứng từ y tế lên Cloudinary | `integration-service` | `4005` | `POST /api/upload` | Đám mây Cloudinary |
+| Tải ảnh avatar, chứng từ, ảnh minh chứng vào lưu trữ nội bộ | `integration-service` | `4005` | `POST /api/upload`<br/>`GET /api/files/:folder/:name` | `hrm_integration` (`file_assets`) + ổ đĩa `STORAGE_DIR` |
+| Lưu trữ dữ liệu cũ (nhiệm vụ hoàn thành, đơn đã xử lý, thông báo đã đọc), khôi phục | `work-service` + `integration-service` | `4003` + `4005` | `POST /api/archive/work/run`<br/>`POST /api/archive/integration/run` | `hrm_work` (`archived_tasks`), `hrm_integration` (`archived_requests`, `archived_notifications`) |
 | Xác thực JWT, Giới hạn tần suất 300 req/min, Chuyển tiếp request, Reverse Proxy | `api-gateway` | `4000` | Mọi request từ Web (3000) và Mobile | **Không có DB** (Stateless) |
 
 ---

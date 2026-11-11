@@ -14,7 +14,7 @@
 | **2** | **Organization Service** | `4002` | `hrm_organization` (5434) | Express, Prisma | Cơ cấu tổ chức, chi nhánh, phòng ban, hồ sơ nhân sự |
 | **3** | **Work Service** | `4003` | `hrm_work` (5435) | Express, Prisma | Ca kíp mẫu, đăng ký/xếp ca, chấm công, giao việc |
 | **4** | **Payroll Service** | `4004` | `hrm_payroll` (5436) | Express, Prisma, SAGA | Tài khoản DN, tính lương, phiếu lương, lệnh chi Idempotent |
-| **5** | **Integration Service** | `4005` | `hrm_integration` (5437) | Express, Prisma, SOAP XML, Cloudinary | Cổng ngân hàng SOAP, đơn từ, Wi-Fi, bảng tin, quy định, upload |
+| **5** | **Integration Service** | `4005` | `hrm_integration` (5437) | Express, Prisma, SOAP XML, lưu trữ file nội bộ | Cổng ngân hàng SOAP, đơn từ, Wi-Fi, bảng tin, quy định, upload, kho lưu trữ dữ liệu cũ |
 
 ---
 
@@ -130,8 +130,11 @@
   - `POST /api/news`: Đăng bài thông báo công ty, gắn cờ bài viết quan trọng.
   - `GET /api/notifications`: Danh sách thông báo cá nhân.
   - `PUT /api/notifications/:id/read`: Đánh dấu đã đọc thông báo.
-- **Tải lên tệp Đám mây (Cloudinary Upload):**
-  - `POST /api/upload`: Nhận file ảnh từ client, upload trực tiếp lên Cloudinary CDN và trả về link an toàn (dùng cho ảnh đại diện, ảnh 2 mặt CCCD, ảnh bằng chứng hoàn thành nhiệm vụ).
+- **Tải ảnh vào lưu trữ nội bộ (Internal File Storage):**
+  - `POST /api/upload`: Nhận ảnh Base64/Data URL từ client, kiểm tra MIME + magic bytes, lưu vào ổ đĩa máy chủ (`STORAGE_DIR`) và trả về link tuyệt đối qua Gateway (dùng cho ảnh đại diện, ảnh 2 mặt CCCD, ảnh bằng chứng hoàn thành nhiệm vụ).
+  - `GET /api/files/:folder/:name`: Phục vụ file sau xác thực; `DELETE` để xóa file; `POST /api/files/scan-orphans` + `purge-orphans` đối soát ảnh mồ côi (admin).
+- **Kho lưu trữ dữ liệu cũ (Archive — chỉ admin):**
+  - `POST /api/archive/integration/preview|run`: Chuyển đơn từ đã duyệt/từ chối và thông báo đã đọc quá hạn vào bảng archive theo batch, vẫn xem lại và khôi phục được (`GET .../requests|notifications`, `POST .../:id/restore`). Work-service có tuyến tương tự `/api/archive/work/*` cho nhiệm vụ hoàn thành.
 - **Văn bản Nội quy & Quy định (Regulations):**
   - `GET /api/regulations`: Tra cứu tài liệu nội quy công ty, phân loại theo danh mục.
   - `POST`, `PUT`, `DELETE /api/regulations`: Ban hành, cập nhật tài liệu quy chế doanh nghiệp.

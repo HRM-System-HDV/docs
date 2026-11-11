@@ -212,3 +212,16 @@ Các mục sau không có trong tài liệu phân công. Không tự quyết đ�
 6. Sau mỗi thay đổi, kiểm tra `GET /health` và chạy test của service (`tests/`).
 7. Khi báo kết quả, nói rõ đã chạy lệnh nào và kết quả ra sao. Không báo "pass" khi chưa chạy.
 8. Ưu tiên theo thứ tự: requests, notifications, SOAP (mốc 1) trước, rồi bảng tin, nội quy, Wi-Fi (mốc 2).
+
+---
+
+## 11. Tiến độ đợt "Lưu trữ" (hoàn thành 10-11-2026)
+
+Workspace hiện không phải git repo nên không tạo nhánh/PR; thay đổi nằm thẳng trong cây mã nguồn.
+
+- [x] Xoá bỏ hoàn toàn dịch vụ ảnh đám mây cũ khỏi code/env/docs: adapter, khối cấu hình chứa secret hardcode và 3 dòng env tương ứng đều đã xoá. Ảnh cũ kệ trên dịch vụ cũ — URL cũ trong DB vẫn render, không migrate.
+- [x] Lưu trữ nội bộ: `utils/localStorage.js` (chống traversal), `validators/fileValidator.js` (MIME + magic bytes, ≤10MB), `FileService` + bảng `FileAsset`; `GET/DELETE /api/files/*`, `POST /api/files/scan-orphans|purge-orphans`; `POST /api/upload` giữ nguyên contract. Env `STORAGE_DIR`, `PUBLIC_BASE_URL`, `MAX_UPLOAD_BYTES`.
+- [x] Archive integration: `ArchivedRequest`/`ArchivedNotification` + migrations; `/api/archive/integration/*` cùng khuôn work (preview/run/list/detail/restore). Suite integration 53/53 pass.
+- [x] `RequestService.deleteById` gọi `FileService.deleteByUrl` best-effort sau xoá row.
+- [ ] **Việc thủ công bắt buộc ngoài code:** API secret của dịch vụ ảnh cũ đã nằm trong lịch sử git — vào dashboard dịch vụ đó rotate/xoá key hoặc xoá tài khoản nếu không dùng nữa. Không thể xử lý bằng code.
+- [ ] Triển khai: đặt `PUBLIC_BASE_URL` đúng địa chỉ client truy cập (LAN/domain); web + gateway cùng site (cookie Lax); backup `STORAGE_DIR` cùng Postgres dump.
