@@ -93,30 +93,58 @@ const taxResult = await payrollClient.getTaxCalculation(payload);
 ```
 
 4. Không được để lộ `role` hay `branchSlug` trên URL route của frontend.
-5. **Cấm join xuyên cơ sở dữ liệu, cấm foreign key xuyên cơ sở dữ liệu, cấm đọc bảng của service khác trực tiếp.** Tham chiếu chéo chỉ lưu dạng chuỗi (`employeeId`, `branchSlug`, `shiftId`); cần chi tiết thì gọi HTTP. Ví dụ payroll cần `penaltyAmount` thì gọi `GET /api/attendance?employeeId=&month=` của work-service, cần `baseSalary` thì gọi `GET /api/employees/:id` của organization-service; integration tạo lệnh chi SOAP thì gọi `POST /api/payroll/payouts` của payroll-service.
+5. **Cấm join xuyên cơ sở dữ liệu, cấm foreign key xuyên cơ sở dữ liệu, cấm đọc bảng của service khác trực tiếp.** Tham chiếu chéo lưu UUID (`employeeId`, `branchId`, `shiftId`); cần chi tiết thì gọi HTTP. Payroll lấy `salary`, `salaryType`, `standardWorkDays` từ Organization và chấm công/phạt từ Work; Integration chuyển yêu cầu chi lương SOAP tới Payroll. Không dùng slug hoặc tên làm khóa liên kết.
 6. Mỗi service có `prisma/schema.prisma`, migration, seed và `DATABASE_URL` riêng trỏ về link Supabase riêng của mình. Cấm dùng chung schema Prisma hay trỏ 2 service về cùng 1 link DB.
 
 ## 7. Quy Tắc Nghiệp Vụ Cốt Lõi
 
-### 7.1. Lương cứng và phạt chấm công
+- Admin toàn quyền trên Web và Mobile; manager bị chặn chức năng quản trị hệ thống; staff chỉ đăng nhập Mobile và không được truy cập chức năng admin/manager. BE phải kiểm tra quyền và phạm vi dữ liệu.
+- Mọi đơn đề nghị chỉ là mẫu đơn; duyệt/chấp nhận không tự sửa ca, chấm công, lương hoặc thanh toán. Thực hiện nội dung đơn là thao tác riêng ở chức năng tương ứng.
+- Task chung theo chi nhánh/ngày/ca mẫu có kết quả chung: một người xong thì cả ca thấy xong. Task riêng có kết quả riêng cho từng người được giao.
+- Task riêng gán trực tiếp cho nhân viên, không có bước nhận/chấp nhận việc.
+- Thông báo, bảng tin và quy định áp dụng theo một chi nhánh hoặc toàn thể; BE thực thi phạm vi, không chỉ lọc ở giao diện.
 
-- Nhân sự hưởng lương cứng hằng tháng (`baseSalary`).
-- Checkout ca không cộng/trừ lương theo giờ. Checkout chỉ ghi nhận khoản phạt nếu vi phạm (đi trễ, về sớm, nghỉ không phép).
-- Công thức chuẩn duy nhất: `netSalary = baseSalary + bonus - totalPenalty`.
-- Mọi tài liệu, code và kiểm thử phải dùng đúng một công thức này. Phát hiện bản lệch phải báo ngay cho nhóm trưởng để chốt.
+### 7.1. Chấm công, lương tích lũy và phạt theo phần trăm
+
+- Nghiệp vụ chi tiết đã chốt tại [BUSINESS.md](BUSINESS.md), dùng để tái cấu trúc BE/FE; không lấy hành vi code cũ thay thế đặc tả này.
+- Khi nhân viên bấm Chấm công, kiểm tra Wi-Fi theo chi nhánh ngay trước màn chọn ca; sai Wi-Fi thì báo lỗi và không mở danh sách ca. BE kiểm tra lại điều kiện khi ghi nhận. Không thêm thuộc tính kiểm tra Wi-Fi cho từng ca.
+- Đúng Wi-Fi mới được mở các ca trong ngày trên Mobile. `Shift` không lưu `branchId`; không dùng chi nhánh ca để thực hiện bước kiểm tra này.
+- Unique `(employeeId, workDate, templateId)` ngăn phân trùng ca. Không cho nhân viên đã có ca được chọn làm thay/đổi vào hoặc được thêm lại ca đó; BE kiểm tra trên đơn và thao tác phân lịch thực tế, kể cả chồng giờ giữa các ca khác mẫu.
+- Mỗi ca chỉ một bản ghi chấm công, tối đa một lần vào và một lần ra. Chỉ đủ check-in và checkout hợp lệ mới có lương ca.
+- Có cấu hình chấm công kép cho hai ca đã phân liền nhau: trong khoảng sớm/trễ riêng được cấu hình, một thao tác chủ động ghi checkout ca trước và check-in ca sau đúng mốc nối. Ghi cả hai trong một transaction, kiểm tra Wi-Fi/quyền/hạn checkout; không ghi đè lượt đã chấm, không phạt tại mốc nối đã chuẩn hóa. Mỗi ca vẫn chỉ một cặp vào–ra.
+- Giữ `earlyCheckinMinutes` cho check-in sớm thông thường; `doubleCheckinEarlyMinutes`/`doubleCheckinLateMinutes` là khoảng riêng cho chấm công kép, bật/tắt bằng `allowDoubleCheckin`.
+- Chỉ ca đã được phân mới có thể tính công/lương. Ca không đủ check-in/checkout chỉ không được cộng lương, không trừ thêm tiền phạt ca đó vào các ca khác.
+- Ví dụ ca bắt đầu 17:00, sang 17:01 chưa check-in thì hiển thị Quên chấm công; vẫn được check-in muộn khi ca hợp lệ và chịu phạt phần trăm theo cấu hình. Ân hạn mặc định 0 phút. Nhãn này không khóa check-in; việc đổi ca vẫn bị cấm khi đã tới giờ bắt đầu.
+- Hạn checkout bằng thời điểm kết thúc ca áp dụng từ ca mẫu cộng `checkoutWindowMinutes`. Từ hạn này, nhân viên không được checkout ca cũ; nút trở về Chấm công cho ca khác. Giữ giờ vào, không tự điền giờ ra, không cộng lương ca thiếu checkout.
+- Đơn bổ sung chỉ gửi/duyệt đề nghị. Admin/quản lý vào chính ca hiện có để chọn và lưu giờ vào/ra; khi đủ hai giờ hợp lệ, ca được tính công và lương như bình thường. Không tạo phân hệ/bảng chấm công hộ riêng; duyệt đơn không tự sửa chấm công.
+- `Employee` chỉ lưu một mức tiền `salary`: đơn giá giờ nếu `salaryType = hourly`, lương tháng thỏa thuận nếu `monthly`.
+- Parttime: lương ca = `salary × giờ thực tế` của ca hợp lệ.
+- Fulltime: người quản lý nhập `standardWorkDays > 0` là số công/tháng thỏa thuận; một ca hoàn thành bằng một công. Lương ca = `salary / standardWorkDays`. Không cố định 26 ngày hoặc tự lấy nguyên lương tháng khi thiếu công.
+- Phạt theo phần trăm: parttime áp dụng trên tiền ca trước cộng/trừ; fulltime áp dụng trên `salary / standardWorkDays`. Không giới hạn số lần phạt, không trừ tiền trực tiếp lúc checkout.
+- `Payslip.baseSalary` là tổng lương tích lũy hợp lệ trong kỳ, không phải mức lương thỏa thuận trên hồ sơ.
+- Đổi mức lương cập nhật ngay phần tích lũy chưa xác nhận theo mức mới; phiếu đã xác nhận giữ bản chụp.
+- Công thức cuối kỳ: `netSalary = baseSalary + bonus - totalPenalty`.
+- Tạm ứng chỉ gửi/duyệt đơn, không tự tạo lệnh chi hoặc trừ lương.
+- Đổi ca không giới hạn số lần, có hai chế độ `manager_approval` và `mutual_acceptance`.
+- Chỉ đổi ca chưa check-in và chưa tới giờ bắt đầu; kiểm tra khi gửi và khi xử lý đơn, cho cả ca nguồn/đích liên quan.
+- Các công thức/luồng trên được BE thực hiện. Comment Prisma chỉ ghi chú; thay đổi tài liệu không đồng nghĩa đã sửa code hoặc chạy migration.
 
 ### 7.2. Lệnh chi và idempotency
 
+- Phiếu lương được nhân viên sở hữu, manager đúng phạm vi hoặc admin xác nhận; lưu người và thời điểm xác nhận.
+- Chỉ chi tiền cho phiếu đã xác nhận và chưa thanh toán, áp dụng cho REST lẫn SOAP. Xác nhận không tự tạo lệnh chi hoặc trừ số dư.
+
 - Mọi thao tác chi tiền bắt buộc có `idempotencyKey`.
 - Gửi trùng `idempotencyKey` phải trả lại bản ghi cũ kèm `{ "deduped": true }`, không được trừ tiền lần hai.
-- Mã giao dịch nội bộ có tiền tố `TXN-`, mã đối soát ngân hàng có tiền tố `BANK-`.
+- `Payout.id` là UUID; mã nghiệp vụ `bankReference` có tiền tố `GD-` theo schema Prisma mới.
+- Có mô phỏng số dư tài khoản nguồn; lệnh chi thành công trừ đúng số tiền, gửi lại cùng lệnh không trừ thêm.
 - Hết số dư trả HTTP `422` với mã `INSUFFICIENT_FUNDS`; phía SOAP chuyển thành `soap:Fault` mô tả tiếng Việt (ví dụ "Số dư không đủ").
 
 ### 7.3. Đồng bộ schema
 
 - Các thực thể lõi (Employee, Branch, Shift, BankAccount, Payslip, Request) phải đồng bộ tuyệt đối giữa backend, `frontend/src/types` và `mobile/lib/src/core/models/`.
 - Không tự đổi tên trường. Mọi thay đổi schema phải cập nhật tài liệu SSOT trước rồi mới sửa code.
-- Quy ước ngày tháng: `date` và `joinDate` dùng `DD-MM-YYYY`; `Payslip.month` dùng `MM-YYYY`; query attendance dùng `month=YYYY-MM`.
+- Ngày nghiệp vụ lưu kiểu ngày, mốc chấm công lưu timestamp có múi giờ; `Payslip.month` và kỳ truy vấn dùng `YYYY-MM`. Định dạng hiển thị ngày không thay kiểu lưu trữ DB.
 
 ## 8. Quy Tắc Cấu Trúc Và Chất Lượng Bắt Buộc
 
