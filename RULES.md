@@ -32,6 +32,8 @@
 2. Chỉ được commit `.env.example` với giá trị mẫu đã khử nhạy cảm.
 3. Không hardcode `JWT_SECRET`, mật khẩu, chuỗi kết nối CSDL trong mã nguồn.
 4. Cookie phiên chuẩn là `hrm-session` (HttpOnly). Khi dùng cookie qua Gateway phải cấu hình CORS cho phép credentials và chỉ định origin cụ thể, cấm dùng `*`.
+5. Tài khoản `staff` chỉ được gọi API bằng `Authorization: Bearer` kèm thẻ có `clientPlatform=mobile` do Gateway suy ra từ request; request staff dùng cookie web phải bị 403.
+6. Rào chắn nền tảng (Origin, User-Agent, `clientPlatform`) chỉ là cơ chế nghiệp vụ phân luồng web/mobile, **không phải biên bảo mật**: token đánh cắp từ mobile dùng được ở curl. Không được dựa vào nó để bỏ kiểm tra quyền; không làm device-bound token khi chưa có yêu cầu nghiệp vụ.
 
 ## 5. Quy Tắc Envelope HTTP Chuẩn
 
@@ -95,6 +97,9 @@ const taxResult = await payrollClient.getTaxCalculation(payload);
 4. Không được để lộ `role` hay `branchSlug` trên URL route của frontend.
 5. **Cấm join xuyên cơ sở dữ liệu, cấm foreign key xuyên cơ sở dữ liệu, cấm đọc bảng của service khác trực tiếp.** Tham chiếu chéo lưu UUID (`employeeId`, `branchId`, `shiftId`); cần chi tiết thì gọi HTTP. Payroll lấy `salary`, `salaryType`, `standardWorkDays` từ Organization và chấm công/phạt từ Work; Integration chuyển yêu cầu chi lương SOAP tới Payroll. Không dùng slug hoặc tên làm khóa liên kết.
 6. Mỗi service có `prisma/schema.prisma`, migration, seed và `DATABASE_URL` riêng trỏ về link Supabase riêng của mình. Cấm dùng chung schema Prisma hay trỏ 2 service về cùng 1 link DB.
+7. **Cấm `prisma migrate dev` và `prisma migrate diff` trên DB đã có dữ liệu.** Prisma không biểu diễn được `CHECK` constraint và partial unique index trong `schema.prisma`, nên các ràng buộc đó chỉ tồn tại trong file `migration.sql`. Một lần `migrate dev` bất cẩn sẽ sinh migration `DROP` toàn bộ ràng buộc đã tạo. Chỉ dùng `prisma migrate deploy` với file migration đã viết sẵn.
+8. Trước khi deploy, chạy `npm.cmd run prisma:check` tại `backend/` để đối chiếu ràng buộc khai báo trong `migration.sql` với ràng buộc còn tồn tại trên DB thật; nếu script báo thiếu thì phải deploy lại migration tương ứng.
+9. Migration chỉ chạy được trên **DB trống**. Migration có guard `LOCK TABLE` + `RAISE EXCEPTION` khi bảng nghiệp vụ còn dữ liệu, nên deploy lại trên DB đã có dữ liệu sẽ dừng có kiểm soát thay vì mất dữ liệu.
 
 ## 7. Quy Tắc Nghiệp Vụ Cốt Lõi
 

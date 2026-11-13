@@ -345,3 +345,14 @@ Workspace hiện không phải git repo nên không tạo nhánh/PR; thay đổi
 - [x] Mobile: `ApiClient.imageHeadersFor` gắn Bearer cho ảnh cùng origin gateway; `image_helper` + 2 chỗ `Image.network` trong tasks dùng header có điều kiện; xoá mọi nhãn hiệu dịch vụ ảnh cũ trong comment/thông báo. `flutter analyze` 0 vấn đề, `flutter test` 15/15 pass.
 - [x] E2e browser (admin): xem trước → xác nhận → lưu trữ 3 bản ghi → xem chi tiết (ảnh minh chứng tải 200) → khôi phục về bảng sống; staff bị 403 ở archive, vẫn GET được file.
 - [ ] Việc thủ công ngoài code: rotate/xoá API key dịch vụ ảnh cũ đã lộ trong lịch sử git (xem ghi chú ở `E_Work_Flow.md` §11).
+
+## 12. Tiến độ Web theo DB/nghiệp vụ mới — 13/11/2026
+
+- [x] Tái cấu trúc frontend theo UUID, DTO và API hiện tại; tách userId/employeeId, chặn staff trên Web.
+- [x] Cập nhật nhân sự/danh mục, ca/chấm công/công việc, phiếu lương/ngân hàng, đơn/nội dung/Wi-Fi; dọn component và dependency cũ không dùng.
+- [x] Cập nhật README frontend và bằng chứng/giới hạn tại AUDIT.md §11.
+- [x] Chạy TypeScript production, ESLint, production build và 6 phép HTTP smoke thành công.
+- [ ] Chạy Vitest và typecheck test sau khi cài được devDependencies; môi trường hiện thiếu package và bị chặn tải mạng.
+- [ ] Nghiệm thu tương tác trình duyệt với BE/DB thật; Mobile chưa thuộc đợt này.
+
+Thay đổi đang nằm trong workspace; không tạo PR, merge hay triển khai hosting trong đợt Web này.

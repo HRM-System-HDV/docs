@@ -42,7 +42,7 @@ Không thiết kế đa khách hàng; không có `tenantId`. Không bổ sung đ
 Vai trò hệ thống khác chức danh công việc. `Position` mô tả vị trí nhân sự; `User.systemRole` phục vụ phân quyền.
 
 - Staff không được đăng nhập Web, không chỉ bị ẩn menu sau đăng nhập.
-- Các nhóm quản trị hệ thống như quản lý tài khoản/vai trò và cấu hình toàn hệ thống thuộc admin; manager không có quyền quản trị hệ thống.
+- Các nhóm quản trị hệ thống như quản lý tài khoản/vai trò và cấu hình toàn hệ thống thuộc admin; manager không có quyền quản trị hệ thống. Riêng cấu hình chấm công áp dụng theo chi nhánh: manager được xem/sửa cấu hình của chi nhánh mình, admin quản lý cấu hình mặc định và mọi chi nhánh.
 - Manager và staff chỉ đọc/thao tác dữ liệu trong phạm vi được cấp. BE kiểm tra quyền cho từng thao tác, không chỉ dựa vào việc FE ẩn nút.
 
 ## 2. Ranh giới dịch vụ và dữ liệu
@@ -79,6 +79,8 @@ Vai trò hệ thống khác chức danh công việc. `Position` mô tả vị t
 ### 3.2. Tổ chức và hồ sơ
 
 - Quản lý chi nhánh, phòng ban, vị trí và người phụ trách bằng ID, không dùng tên làm khóa liên kết.
+- Trạng thái danh mục là enum phía BE: chi nhánh `hoạt động`/`vô hiệu hóa`; phòng ban và vị trí `hoạt động`/`tạm dừng`. Giá trị khác bị 400.
+- Cột "Nhân sự" trên chi nhánh và phòng ban chỉ đếm hồ sơ `đang làm`; riêng vị trí đếm mọi hồ sơ đang gắn vị trí (kể cả đã nghỉ việc) vì xóa vị trí sẽ SetNull chức danh của đúng số hồ sơ đó.
 - Hồ sơ nhân viên gồm thông tin cá nhân, liên hệ, địa chỉ, ngày vào/nghỉ việc, ảnh đại diện, cơ cấu tổ chức, thông tin lương và tài khoản ngân hàng.
 - Có quản lý hồ sơ CCCD: số CCCD, ngày cấp, nơi cấp, ảnh mặt trước và mặt sau.
 - Nhân viên nghỉ việc được đổi trạng thái và ghi `resignedAt`, không xóa cứng hồ sơ để giữ lịch sử.
@@ -161,7 +163,7 @@ Luồng người dùng bắt buộc:
 - Nhân viên vẫn được check-in muộn nếu ca và điều kiện chấm công còn hợp lệ; ghi nhận đi muộn và áp dụng `latePenaltyPct`. Sau khi checkout hợp lệ, ca được cộng lương và trừ phạt theo quy tắc tại mục 6.
 - Không nhầm trạng thái này với hạn checkout: hết cửa sổ checkout thì không được tự checkout ca cũ nữa.
 - Ca quên chấm công không đủ điều kiện đổi ca; nhân viên có thể gửi đơn để admin/quản lý xem và nhập giờ trên ca theo mục 5.4.
-- Giữ cấu hình ân hạn/phạt đi muộn; `gracePeriodMinutes` mặc định 0 để ví dụ 17:01 check-in cho ca bắt đầu 17:00 bị phạt. Nếu quản lý cấu hình ân hạn khác 0 thì BE xét phạt theo cấu hình đó; nhãn Quên chấm công không tự tạo khoản phạt khi chưa có chấm công hợp lệ.
+- Giữ cấu hình ân hạn/phạt đi muộn; `gracePeriodMinutes` mặc định 0 để ví dụ 17:01 check-in cho ca bắt đầu 17:00 bị phạt. Nếu quản lý cấu hình ân hạn khác 0 cho chi nhánh thì BE xét phạt theo cấu hình của chi nhánh nhân viên đó; nhãn Quên chấm công không tự tạo khoản phạt khi chưa có chấm công hợp lệ.
 
 ### 5.3. Hạn checkout và hành vi nút
 
@@ -197,6 +199,8 @@ Ví dụ: ca kết thúc lúc **17:00**, `checkoutWindowMinutes = 60`:
 - Ghi nhật ký người thực hiện thao tác bằng `Backlog`; không tạo bảng, cờ trên ca hay một phân hệ “chấm công hộ” riêng.
 
 ### 5.5. Cấu hình còn sử dụng
+
+Cấu hình chấm công lưu theo chi nhánh (`AttendanceConfig.branchId`): row có `branchId` áp dụng riêng cho chi nhánh đó; row `branchId = NULL` là cấu hình mặc định toàn hệ thống. Khi chấm công, BE xét theo thứ tự: row chi nhánh của nhân viên → row mặc định → giá trị mặc định trong code. Admin sửa được cấu hình mặc định và mọi chi nhánh; manager chỉ xem/sửa cấu hình chi nhánh mình (BE chặn request khác chi nhánh); staff chỉ đọc cấu hình chi nhánh mình.
 
 | Trường trong `AttendanceConfig` | Vai trò |
 |---|---|
@@ -353,6 +357,7 @@ netSalary = baseSalary + bonus - totalPenalty
 
 - Có mô phỏng số dư bằng `BankAccount.balance` và trừ tiền tài khoản nguồn khi chi lương thành công.
 - Phân biệt tài khoản nguồn của doanh nghiệp với tài khoản nhận lương trên `Employee`.
+- Tài khoản nguồn lưu ngân hàng, chủ tài khoản, `bankBranch` (ngân hàng/phòng giao dịch nơi mở tài khoản, text tự do) và `branchId` (chi nhánh nội bộ sở hữu tài khoản, UUID của Organization).
 - Có chọn tài khoản nguồn chính; dự kiến tối đa một tài khoản chính toàn hệ thống.
 - Tổng tiền và số người hưởng của lệnh chi phải phù hợp tập phiếu lương được trả.
 - Thiếu số dư thì từ chối chi, không tạo kết quả thanh toán thành công giả.
@@ -377,7 +382,7 @@ netSalary = baseSalary + bonus - totalPenalty
 - Công việc riêng gán thẳng cho nhân viên, hiển thị ngay cho người đó; không có bước nhận/chấp nhận công việc. Mỗi người có task và kết quả hoàn thành riêng; một người xong không làm task riêng của người khác hoàn thành.
 - Giao cùng một nội dung riêng cho nhiều người thì từng người có bản ghi riêng; không dùng một task chung có kết quả chung để thay cho công việc cá nhân.
 - Task chung để `assignedTo = null` và có `branchId`, `workDate`, `templateId`; task riêng có `assignedTo`. BE kiểm tra đủ thông tin và điều kiện hiển thị theo ca.
-- Có yêu cầu ảnh minh chứng, URL ảnh, người nộp và thời điểm nộp.
+- Có yêu cầu ảnh minh chứng, URL ảnh, người nộp và thời điểm nộp. Khi `requirePhoto` bật, nhân viên phải có ảnh mới được hoàn thành; admin/manager được duyệt đặc cách hoàn thành khi chưa có ảnh (UI web có bước xác nhận).
 - Các tên chụp để hiển thị không dùng làm khóa hoặc kiểm tra quyền.
 - Không lưu `sourceType` hay email người nhận riêng; xác định người giao/ca bằng ID.
 
@@ -440,7 +445,9 @@ Comment Prisma là ghi chú thiết kế, không chạy công thức và không 
 
 - Cập nhật hợp đồng API và model Web/Mobile theo schema mới; không lấy payload/seed cũ làm yêu cầu nghiệp vụ.
 - Các `Work_Flow` cũ ghi nhận bản triển khai trước; phần hợp đồng và tiến độ tái cấu trúc cần được cập nhật khi thực hiện từng service, không coi checkbox cũ là đã xong thiết kế mới.
-- Migration `20261112230000_hrm_uuid_redesign` của từng service tạo sequence/hàm sinh mã và các CHECK/index ngoài khả năng biểu diễn của Prisma. Migration giữ lịch sử và dừng nếu bảng nghiệp vụ có dữ liệu; không dùng reset.
+- Migration `20261112230000_hrm_uuid_redesign` của từng service tạo các CHECK/index ngoài khả năng biểu diễn của Prisma. Migration giữ lịch sử và dừng nếu bảng nghiệp vụ có dữ liệu; không dùng reset.
+- **Hàm/sequence sinh mã nghiệp vụ hiện chỉ có ở 2/5 service**: Organization (`branch_code_seq`, `employee_code_seq`) và Payroll (`payout_ref_seq` → mã `GD-`). Work (`templateCode`), Integration (`regulationCode`) và Identity **không có sequence**; các mã này do caller gửi lên và tầng service kiểm tra trùng ở mã ứng dụng, đồng thời DB vẫn có unique index tương ứng. Nếu sau này muốn sinh mã ở DB cho các service còn lại thì phải bổ sung sequence **và** đổi hợp đồng API theo `BUSINESS.md` §11.1 — không tự ý đổi một phía.
+- **Nợ drift ràng buộc**: Prisma không biểu diễn được `CHECK` và partial unique index trong `schema.prisma`, nên các ràng buộc đó **chỉ tồn tại trong file `migration.sql`**. Chỉ dùng `prisma migrate deploy` với file migration đã viết sẵn; **cấm `prisma migrate dev`/`migrate diff`** trên DB có dữ liệu vì sẽ sinh migration `DROP` toàn bộ ràng buộc. Kiểm tra trước khi deploy bằng `npm.cmd run prisma:check` tại `backend/`.
 - Các CHECK gồm điều kiện số công, kiểu lương/loại đơn, số tiền, thứ tự thời gian, xác nhận phiếu và giới hạn tỷ lệ.
 - Hai bảng cấu hình có CHECK buộc `isSingleton = true`, kết hợp unique để bảo đảm tối đa một dòng.
 - Tài khoản nguồn có partial unique index để bảo đảm tối đa một tài khoản chính.
