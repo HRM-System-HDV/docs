@@ -37,7 +37,7 @@
 - **Xác thực người dùng (Authentication):**
   - `POST /api/auth/login`: Đăng nhập bằng Email & Mật khẩu (kiểm tra hash bcrypt).
   - `POST /api/auth/logout`: Đăng xuất, xóa phiên và làm sạch cookie phiên.
-  - `POST /api/auth/refresh`: Cấp mới Access Token (15 phút) bằng Refresh Token (7 ngày).
+  - `POST /api/auth/refresh`: Cấp mới Access Token bằng Refresh Token; cả hai đều mặc định 7 ngày (`JWT_EXPIRES_IN=7d`). Thu hồi khi đăng xuất/đổi vai trò chỉ cắt refresh token + device session, access token đã cấp vẫn sống tới hạn.
   - `POST /api/auth/forgot-password`: Quy trình hỗ trợ cấp lại mật khẩu.
 - **Phân quyền vai trò (RBAC):**
   - Quản trị viên (`admin`): Toàn quyền trên toàn hệ sinh thái doanh nghiệp.
