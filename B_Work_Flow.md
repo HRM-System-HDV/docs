@@ -214,3 +214,14 @@ Các mục sau không có trong tài liệu phân công. Không tự quyết đ�
 6. Sau mỗi thay đổi, kiểm tra `GET /health` và chạy test của service (`tests/`).
 7. Khi báo kết quả, nói rõ đã chạy lệnh nào và kết quả ra sao. Không báo "pass" khi chưa chạy.
 8. Ưu tiên: hoàn thành cả organization-service và work-service trước mốc 1, vì D và mobile phụ thuộc vào dữ liệu này.
+
+---
+
+## 11. Tiến độ đợt "Lưu trữ" (hoàn thành 10-11-2026)
+
+Workspace hiện không phải git repo nên không tạo nhánh/PR; thay đổi nằm thẳng trong cây mã nguồn.
+
+- [x] work-service: `ArchivedTask` + migration `archived_tasks`; `ArchiveService/Controller/routes` cho `/api/archive/work/*` (preview/run batch ≤2000/list/detail/restore, restore trùng id trả 409). Test `tests/integration/archive.test.js` pass; toàn bộ suite work 7/7.
+- [x] work-service: `src/clients/IntegrationClient.js` (timeout 5000ms); `deleteTask` gọi xoá `proofPhotoUrl` best-effort sau khi xoá row; env `INTEGRATION_SERVICE_URL`.
+- [x] organization-service: `src/clients/IntegrationClient.js`; `removeEmployee` dọn avatar/cccdFront/cccdBack bằng `Promise.allSettled` best-effort; env `INTEGRATION_SERVICE_URL`. Suite org 3/3 pass.
+- [x] E2e: xoá task qua gateway kéo theo xoá file trên đĩa + soft-delete `FileAsset` (đối soát ở integration).

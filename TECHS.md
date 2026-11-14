@@ -125,7 +125,7 @@ Khi tạo service mới phải chọn cổng còn trống trong dải `4001+`, k
 | **Organization Service** | `backend/organization-service/` | `4002` | `hrm_organization` | Danh mục tổ chức và nhân sự (chủ sở hữu: B) |
 | **Work Service** | `backend/work-service/` | `4003` | `hrm_work` | Ca, chấm công, tác vụ (chủ sở hữu: B) |
 | **Payroll Service** | `backend/payroll-service/` | `4004` | `hrm_payroll` | Lương, lệnh chi idempotent, phiếu lương (chủ sở hữu: D) |
-| **Integration Service** | `backend/integration-service/` | `4005` | `hrm_integration` | SOAP ngân hàng, yêu cầu, thông báo, tin tức, nội quy, Wi-Fi (chủ sở hữu: E) |
+| **Integration Service** | `backend/integration-service/` | `4005` | `hrm_integration` | SOAP ngân hàng, yêu cầu, thông báo, tin tức, nội quy, Wi-Fi, lưu trữ file nội bộ, kho lưu trữ dữ liệu cũ (chủ sở hữu: E) |
 
 > Quyết định đã chốt: **5 database riêng (database-per-service)**. Gateway (4000) stateless nên không có DB. Cấm dùng chung 1 DB cho nhiều service.
 
@@ -201,9 +201,16 @@ lib/src/
 - Bảng sở hữu chi tiết:
   - `hrm_identity`: `users`, `refresh_tokens`, `device_sessions`.
   - `hrm_organization`: `branches`, `departments`, `employees`.
-  - `hrm_work`: `shifts`, `attendances`, `attendance_configs`, `tasks`.
+  - `hrm_work`: `shifts`, `attendances`, `attendance_configs`, `tasks`, `archived_tasks`.
   - `hrm_payroll`: `bank_accounts`, `payouts`, `payslips`.
-  - `hrm_integration`: `requests`, `notifications`, `news`, `regulations`, `wifi_configs`.
+  - `hrm_integration`: `requests`, `notifications`, `news`, `regulations`, `wifi_configs`, `file_assets`, `archived_requests`, `archived_notifications`.
+
+### 6.2.1. Lưu trữ file nội bộ và kho lưu trữ dữ liệu cũ (on-premise)
+
+- Ảnh upload lưu trên ổ đĩa máy chủ trong `STORAGE_DIR` (integration-service), đăng ký trong bảng `file_assets`; phục vụ qua `GET /api/files/*` sau xác thực Gateway (cookie `hrm-session` cho Web, Bearer cho Mobile). Không dùng dịch vụ đám mây bên thứ ba.
+- Env cấu hình: `STORAGE_DIR` + `PUBLIC_BASE_URL` + `MAX_UPLOAD_BYTES` (integration-service); `INTEGRATION_SERVICE_URL` (work-service, organization-service — gọi nội bộ xóa ảnh khi xóa bản ghi, best-effort timeout 5000ms).
+- Archive: `/api/archive/work/*` (nhiệm vụ hoàn thành) và `/api/archive/integration/*` (đơn đã xử lý, thông báo đã đọc) — chỉ admin; chuyển batch vào bảng `archived_*` trong transaction, xem lại và khôi phục được. `Backlog` không bao giờ archive.
+- Yêu cầu triển khai: Web Portal và Gateway phải **cùng site** (cookie `SameSite=Lax` mới gửi kèm request ảnh `<img>`), ví dụ `hrm.company.local` + `api.hrm.company.local` sau một nginx; `PUBLIC_BASE_URL` là địa chỉ Gateway cả web lẫn mobile truy cập được. Backup = Postgres dump + thư mục `STORAGE_DIR` đi cùng nhau; nếu container hóa integration-service phải gắn named volume cho `STORAGE_DIR`.
 
 ### 6.3. Các mẫu kiến trúc trong môn PTPMDV
 

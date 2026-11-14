@@ -14,7 +14,7 @@
 | **2** | **Organization Service** | `4002` | `hrm_organization` (5434) | Express, Prisma | Cơ cấu tổ chức, chi nhánh, phòng ban, hồ sơ nhân sự |
 | **3** | **Work Service** | `4003` | `hrm_work` (5435) | Express, Prisma | Ca kíp mẫu, đăng ký/xếp ca, chấm công, giao việc |
 | **4** | **Payroll Service** | `4004` | `hrm_payroll` (5436) | Express, Prisma, SAGA | Tài khoản DN, tính lương, phiếu lương, lệnh chi Idempotent |
-| **5** | **Integration Service** | `4005` | `hrm_integration` (5437) | Express, Prisma, SOAP XML, Cloudinary | Cổng ngân hàng SOAP, đơn từ, Wi-Fi, bảng tin, quy định, upload |
+| **5** | **Integration Service** | `4005` | `hrm_integration` (5437) | Express, Prisma, SOAP XML, lưu trữ file nội bộ | Cổng ngân hàng SOAP, đơn từ, Wi-Fi, bảng tin, quy định, upload, kho lưu trữ dữ liệu cũ |
 
 ---
 
@@ -37,7 +37,7 @@
 - **Xác thực người dùng (Authentication):**
   - `POST /api/auth/login`: Đăng nhập bằng Email & Mật khẩu (kiểm tra hash bcrypt).
   - `POST /api/auth/logout`: Đăng xuất, xóa phiên và làm sạch cookie phiên.
-  - `POST /api/auth/refresh`: Cấp mới Access Token (15 phút) bằng Refresh Token (7 ngày).
+  - `POST /api/auth/refresh`: Cấp mới Access Token bằng Refresh Token; cả hai đều mặc định 7 ngày (`JWT_EXPIRES_IN=7d`). Thu hồi khi đăng xuất/đổi vai trò chỉ cắt refresh token + device session, access token đã cấp vẫn sống tới hạn.
   - `POST /api/auth/forgot-password`: Quy trình hỗ trợ cấp lại mật khẩu.
 - **Phân quyền vai trò (RBAC):**
   - Quản trị viên (`admin`): Toàn quyền trên toàn hệ sinh thái doanh nghiệp.
@@ -116,7 +116,7 @@
 - **Cổng thanh toán liên ngân hàng SOAP (Banking SOAP Gateway):**
   - `GET /soap/payroll?wsdl`: Cung cấp file đặc tả WSDL chuẩn XML cho đối tác ngân hàng.
   - `POST /soap/payroll`: Tiếp nhận và xử lý điện chuyển tiền XML (`PayoutRequest` / `PayoutResponse`).
-  - `GET`, `PUT /api/soap-config`: Cấu hình mô phỏng môi trường ngân hàng (độ trễ phản hồi, trạng thái chứng chỉ mTLS, cổng kiểm tra kết nối).
+  - `GET`, `PUT /api/soap-config`: Cấu hình kết nối ngân hàng (endpoint, WSDL, chứng chỉ mTLS, IP cho phép); `POST /api/soap-config/ping` đo thật độ trễ và trạng thái endpoint.
 - **Quản lý Đơn từ & Phê duyệt (Requests):**
   - `GET /api/requests`: Danh sách đơn từ (nghỉ phép, đổi ca, giải trình công).
   - `POST /api/requests`: Nhân viên tạo đơn mới.
@@ -130,8 +130,11 @@
   - `POST /api/news`: Đăng bài thông báo công ty, gắn cờ bài viết quan trọng.
   - `GET /api/notifications`: Danh sách thông báo cá nhân.
   - `PUT /api/notifications/:id/read`: Đánh dấu đã đọc thông báo.
-- **Tải lên tệp Đám mây (Cloudinary Upload):**
-  - `POST /api/upload`: Nhận file ảnh từ client, upload trực tiếp lên Cloudinary CDN và trả về link an toàn (dùng cho ảnh đại diện, ảnh 2 mặt CCCD, ảnh bằng chứng hoàn thành nhiệm vụ).
+- **Tải ảnh vào lưu trữ nội bộ (Internal File Storage):**
+  - `POST /api/upload`: Nhận ảnh Base64/Data URL từ client, kiểm tra MIME + magic bytes, lưu vào ổ đĩa máy chủ (`STORAGE_DIR`) và trả về link tuyệt đối qua Gateway (dùng cho ảnh đại diện, ảnh 2 mặt CCCD, ảnh bằng chứng hoàn thành nhiệm vụ).
+  - `GET /api/files/:folder/:name`: Phục vụ file sau xác thực; `DELETE` để xóa file; `POST /api/files/scan-orphans` + `purge-orphans` đối soát ảnh mồ côi (admin).
+- **Kho lưu trữ dữ liệu cũ (Archive — chỉ admin):**
+  - `POST /api/archive/integration/preview|run`: Chuyển đơn từ đã duyệt/từ chối và thông báo đã đọc quá hạn vào bảng archive theo batch, vẫn xem lại và khôi phục được (`GET .../requests|notifications`, `POST .../:id/restore`). Work-service có tuyến tương tự `/api/archive/work/*` cho nhiệm vụ hoàn thành.
 - **Văn bản Nội quy & Quy định (Regulations):**
   - `GET /api/regulations`: Tra cứu tài liệu nội quy công ty, phân loại theo danh mục.
   - `POST`, `PUT`, `DELETE /api/regulations`: Ban hành, cập nhật tài liệu quy chế doanh nghiệp.
